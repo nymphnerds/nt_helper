@@ -11,6 +11,7 @@ import 'package:flutter/services.dart';
 import 'package:nt_helper/cubit/disting_cubit.dart';
 import 'package:nt_helper/domain/i_disting_midi_manager.dart';
 import 'package:path/path.dart' as p;
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../poly_multisample/decent_sampler_converter.dart';
 import '../../poly_multisample/poly_multisample_models.dart';
@@ -25,18 +26,63 @@ class PolyMultisampleBuilderScreen extends StatefulWidget {
       _PolyMultisampleBuilderScreenState();
 }
 
+enum _DecentImportSourceKind { file, folder }
+
 class _PolyMultisampleBuilderScreenState
     extends State<PolyMultisampleBuilderScreen> {
+  static const _lastLocalSampleFolderKey =
+      'poly_multisample.last_local_sample_folder';
+  static const _lastDecentSourceFolderKey =
+      'poly_multisample.last_decent_source_folder';
+  static const _lastDecentOutputFolderKey =
+      'poly_multisample.last_decent_output_folder';
+
   PolySampleInstrument? _instrument;
   PolySampleRegion? _selectedRegion;
   bool _loading = false;
   String? _error;
+  String? _lastLocalSampleFolder;
+  String? _lastDecentSourceFolder;
+  String? _lastDecentOutputFolder;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadPickerPreferences());
+  }
+
+  Future<void> _loadPickerPreferences() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() {
+      _lastLocalSampleFolder = prefs.getString(_lastLocalSampleFolderKey);
+      _lastDecentSourceFolder = prefs.getString(_lastDecentSourceFolderKey);
+      _lastDecentOutputFolder = prefs.getString(_lastDecentOutputFolderKey);
+    });
+  }
+
+  String? _existingDirectory(String? path) {
+    if (path == null || path.isEmpty) return null;
+    return Directory(path).existsSync() ? path : null;
+  }
+
+  String _directoryForPath(String path) {
+    return Directory(path).existsSync() ? path : p.dirname(path);
+  }
+
+  Future<void> _savePickerPreference(String key, String path) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(key, path);
+  }
 
   Future<void> _chooseFolder() async {
     final path = await FilePicker.getDirectoryPath(
       dialogTitle: 'Choose Disting sample folder',
+      initialDirectory: _existingDirectory(_lastLocalSampleFolder),
     );
     if (path == null) return;
+    setState(() => _lastLocalSampleFolder = path);
+    unawaited(_savePickerPreference(_lastLocalSampleFolderKey, path));
     await _loadFolder(path);
   }
 
@@ -121,19 +167,48 @@ class _PolyMultisampleBuilderScreenState
   }
 
   Future<void> _importDecentSampler() async {
-    final source = await FilePicker.pickFiles(
-      dialogTitle: 'Choose Decent Sampler library or preset',
-      type: FileType.custom,
-      allowedExtensions: const ['dspreset', 'dslibrary', 'zip'],
-      allowMultiple: false,
-    );
-    final sourcePath = source?.files.single.path;
+    final sourcePath = await _chooseDecentSourcePath();
     if (sourcePath == null) return;
+
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    var options = const DecentSamplerConvertOptions();
+    try {
+      final analysis = await DecentSamplerConverter().analyze(
+        sourcePath: sourcePath,
+      );
+      if (!mounted) return;
+      setState(() => _loading = false);
+      if (analysis.hasAmbiguousOverlaps && analysis.groups.length > 1) {
+        final chosen = await showDialog<DecentSamplerConvertOptions>(
+          context: context,
+          builder: (context) => _DecentImportOptionsDialog(analysis: analysis),
+        );
+        if (chosen == null) return;
+        options = chosen;
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = e.toString();
+          _loading = false;
+        });
+      }
+      return;
+    }
 
     final outputPath = await FilePicker.getDirectoryPath(
       dialogTitle: 'Choose folder for Disting NT output',
+      initialDirectory:
+          _existingDirectory(_lastDecentOutputFolder) ??
+          _existingDirectory(_lastLocalSampleFolder) ??
+          _existingDirectory(_lastDecentSourceFolder),
     );
     if (outputPath == null) return;
+    setState(() => _lastDecentOutputFolder = outputPath);
+    unawaited(_savePickerPreference(_lastDecentOutputFolderKey, outputPath));
 
     setState(() {
       _loading = true;
@@ -143,6 +218,7 @@ class _PolyMultisampleBuilderScreenState
       final result = await DecentSamplerConverter().convert(
         sourcePath: sourcePath,
         outputParentPath: outputPath,
+        options: options,
       );
       if (!mounted) return;
       final firstFolder = result.outputFolders.isEmpty
@@ -173,41 +249,132 @@ class _PolyMultisampleBuilderScreenState
     }
   }
 
+  Future<String?> _chooseDecentSourcePath() async {
+    final sourceKind = await showDialog<_DecentImportSourceKind>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Import'),
+        content: const Text(
+          'Decent Sampler format only. Choose a .dslibrary, .zip, .dspreset, or an already extracted folder.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          OutlinedButton.icon(
+            onPressed: () =>
+                Navigator.of(context).pop(_DecentImportSourceKind.folder),
+            icon: const Icon(Icons.folder_open),
+            label: const Text('Extracted folder'),
+          ),
+          FilledButton.icon(
+            onPressed: () =>
+                Navigator.of(context).pop(_DecentImportSourceKind.file),
+            icon: const Icon(Icons.file_open),
+            label: const Text('File / archive'),
+          ),
+        ],
+      ),
+    );
+    if (sourceKind == null) return null;
+
+    if (sourceKind == _DecentImportSourceKind.folder) {
+      final path = await FilePicker.getDirectoryPath(
+        dialogTitle: 'Choose extracted Decent Sampler folder',
+        initialDirectory: _existingDirectory(_lastDecentSourceFolder),
+      );
+      if (path != null) {
+        setState(() => _lastDecentSourceFolder = path);
+        unawaited(_savePickerPreference(_lastDecentSourceFolderKey, path));
+      }
+      return path;
+    }
+
+    final source = await FilePicker.pickFiles(
+      dialogTitle: 'Choose Decent Sampler library or preset',
+      type: FileType.custom,
+      allowedExtensions: const ['dspreset', 'dslibrary', 'zip'],
+      allowMultiple: false,
+      initialDirectory: _existingDirectory(_lastDecentSourceFolder),
+    );
+    final path = source?.files.single.path;
+    if (path != null) {
+      final sourceFolder = _directoryForPath(path);
+      setState(() => _lastDecentSourceFolder = sourceFolder);
+      unawaited(
+        _savePickerPreference(_lastDecentSourceFolderKey, sourceFolder),
+      );
+    }
+    return path;
+  }
+
   Future<void> _showConversionResult(
     DecentSamplerConversionResult result,
   ) async {
     if (!mounted) return;
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
     await showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Decent import complete'),
         content: SizedBox(
-          width: 520,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(result.summary),
-              const SizedBox(height: 12),
-              Text(
-                result.outputFolders.join('\n'),
-                maxLines: 4,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-              if (result.warnings.isNotEmpty) ...[
-                const SizedBox(height: 12),
+          width: 680,
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(result.summary, style: theme.textTheme.bodyLarge),
+                const SizedBox(height: 16),
                 Text(
-                  result.warnings.take(6).join('\n'),
-                  maxLines: 6,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                  result.outputFolders.length == 1
+                      ? 'Loaded output folder'
+                      : 'Loaded output folders',
+                  style: theme.textTheme.titleSmall,
                 ),
+                const SizedBox(height: 6),
+                SelectableText(
+                  result.outputFolders.join('\n'),
+                  style: theme.textTheme.bodyMedium,
+                ),
+                if (result.decisions.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  Text('Conversion choices', style: theme.textTheme.titleSmall),
+                  const SizedBox(height: 6),
+                  for (final decision in result.decisions.take(8))
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Text(decision, style: theme.textTheme.bodyMedium),
+                    ),
+                ],
+                if (result.warnings.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  Text('Warnings', style: theme.textTheme.titleSmall),
+                  const SizedBox(height: 6),
+                  for (final warning in result.warnings.take(8))
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Text(
+                        warning,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: colorScheme.error,
+                        ),
+                      ),
+                    ),
+                ],
               ],
-            ],
+            ),
           ),
         ),
         actions: [
+          if (result.outputFolders.isNotEmpty)
+            TextButton.icon(
+              onPressed: () =>
+                  unawaited(_openFolderPath(result.outputFolders.first)),
+              icon: const Icon(Icons.folder_open),
+              label: const Text('Open folder'),
+            ),
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
             child: const Text('OK'),
@@ -215,6 +382,23 @@ class _PolyMultisampleBuilderScreenState
         ],
       ),
     );
+  }
+
+  Future<void> _openFolderPath(String dir) async {
+    try {
+      if (Platform.isWindows) {
+        await Process.run('explorer.exe', [dir]);
+      } else if (Platform.isMacOS) {
+        await Process.run('open', [dir]);
+      } else {
+        await Process.run('xdg-open', [dir]);
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Could not open folder: $e')));
+    }
   }
 
   @override
@@ -397,9 +581,17 @@ class _EmptyBuilderView extends StatelessWidget {
                 OutlinedButton.icon(
                   onPressed: onImportDecentSampler,
                   icon: const Icon(Icons.file_upload_outlined),
-                  label: const Text('Import Decent'),
+                  label: const Text('Import'),
                 ),
               ],
+            ),
+            const SizedBox(height: 10),
+            Text(
+              'Import currently supports Decent Sampler format only: .dslibrary, .zip, .dspreset, or extracted folders.',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+              ),
+              textAlign: TextAlign.center,
             ),
           ],
         ),
@@ -456,6 +648,265 @@ class _SdFolderPickerDialog extends StatelessWidget {
   }
 }
 
+class _DecentImportOptionsDialog extends StatefulWidget {
+  const _DecentImportOptionsDialog({required this.analysis});
+
+  final DecentSamplerImportAnalysis analysis;
+
+  @override
+  State<_DecentImportOptionsDialog> createState() =>
+      _DecentImportOptionsDialogState();
+}
+
+class _DecentImportOptionsDialogState
+    extends State<_DecentImportOptionsDialog> {
+  DecentSamplerGroupHandling _handling =
+      DecentSamplerGroupHandling.velocityLayers;
+  String? _selectedGroupKey;
+
+  @override
+  void initState() {
+    super.initState();
+    _handling = widget.analysis.recommendedGroupHandling;
+    _selectedGroupKey = widget.analysis.groups.isEmpty
+        ? null
+        : widget.analysis.groups.first.key;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final groups = widget.analysis.groups;
+    return AlertDialog(
+      title: const Text('Decent import strategy'),
+      content: SizedBox(
+        width: 760,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '${widget.analysis.presetName} contains Decent Sampler group mappings that need a choice. '
+                'Each preset imports as its own Disting NT folder; these choices control how groups inside each preset are mapped.',
+                style: theme.textTheme.bodyLarge,
+              ),
+              if (widget.analysis.structureSummary.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Text(
+                  widget.analysis.structureSummary,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: theme.colorScheme.primary,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+              const SizedBox(height: 18),
+              Text('Compact report', style: theme.textTheme.titleSmall),
+              const SizedBox(height: 8),
+              DecoratedBox(
+                decoration: BoxDecoration(
+                  border: Border.all(color: theme.colorScheme.outlineVariant),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Column(
+                  children: [
+                    for (var index = 0; index < groups.length; index++)
+                      _GroupReportRow(
+                        group: groups[index],
+                        showDivider: index < groups.length - 1,
+                      ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 18),
+              Text('Import choices', style: theme.textTheme.titleSmall),
+              const SizedBox(height: 8),
+              _ImportOptionTile(
+                value: DecentSamplerGroupHandling.velocityLayers,
+                groupValue: _handling,
+                title: 'Use groups as velocity layers',
+                subtitle:
+                    'Groups become V1, V2, V3 etc. Round robins stay round robins.',
+                onChanged: _setHandling,
+              ),
+              _ImportOptionTile(
+                value: DecentSamplerGroupHandling.splitFolders,
+                groupValue: _handling,
+                title: 'Split groups into separate folders',
+                subtitle:
+                    'One Disting folder per group/layer/articulation. Round robins stay round robins.',
+                onChanged: _setHandling,
+              ),
+              _ImportOptionTile(
+                value: DecentSamplerGroupHandling.selectedGroup,
+                groupValue: _handling,
+                title: 'Convert one group only',
+                subtitle: 'Choose one Decent group and ignore the others.',
+                onChanged: _setHandling,
+              ),
+              if (_handling == DecentSamplerGroupHandling.selectedGroup) ...[
+                const SizedBox(height: 8),
+                for (final group in groups)
+                  _SelectedGroupRow(
+                    group: group,
+                    selected: group.key == _selectedGroupKey,
+                    onTap: () => setState(() => _selectedGroupKey = group.key),
+                  ),
+              ],
+              _ImportOptionTile(
+                value: DecentSamplerGroupHandling.auto,
+                groupValue: _handling,
+                title: 'Default mapping',
+                subtitle:
+                    'Keep the automatic parser behavior and report any ambiguity.',
+                onChanged: _setHandling,
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () {
+            Navigator.of(context).pop(
+              DecentSamplerConvertOptions(
+                groupHandling: _handling,
+                selectedGroupKey:
+                    _handling == DecentSamplerGroupHandling.selectedGroup
+                    ? _selectedGroupKey
+                    : null,
+              ),
+            );
+          },
+          child: const Text('Continue'),
+        ),
+      ],
+    );
+  }
+
+  void _setHandling(DecentSamplerGroupHandling? value) {
+    if (value == null) return;
+    setState(() => _handling = value);
+  }
+}
+
+class _SelectedGroupRow extends StatelessWidget {
+  const _SelectedGroupRow({
+    required this.group,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final DecentSamplerGroupInfo group;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return ListTile(
+      dense: true,
+      contentPadding: EdgeInsets.zero,
+      leading: Icon(
+        selected ? Icons.check_circle : Icons.circle_outlined,
+        color: selected ? colorScheme.primary : colorScheme.outline,
+      ),
+      title: Text(group.name),
+      subtitle: Text(
+        '${group.sampleCount} samples, ${group.noteRange}, ${group.roundRobinSummary}',
+      ),
+      onTap: onTap,
+    );
+  }
+}
+
+class _GroupReportRow extends StatelessWidget {
+  const _GroupReportRow({required this.group, required this.showDivider});
+
+  final DecentSamplerGroupInfo group;
+  final bool showDivider;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final examples = group.examples.take(2).join(', ');
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(
+                width: 150,
+                child: Text(
+                  group.name,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  '${group.sampleCount} samples, ${group.rootCount} roots, ${group.noteRange}. '
+                  '${group.velocitySummary}; ${group.roundRobinSummary}. '
+                  '${group.xmlSummary}. '
+                  '${examples.isEmpty ? '' : 'Examples: $examples'}',
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (showDivider) Divider(height: 1, color: colorScheme.outlineVariant),
+      ],
+    );
+  }
+}
+
+class _ImportOptionTile extends StatelessWidget {
+  const _ImportOptionTile({
+    required this.value,
+    required this.groupValue,
+    required this.title,
+    required this.subtitle,
+    required this.onChanged,
+  });
+
+  final DecentSamplerGroupHandling value;
+  final DecentSamplerGroupHandling groupValue;
+  final String title;
+  final String subtitle;
+  final ValueChanged<DecentSamplerGroupHandling?> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final selected = value == groupValue;
+    return ListTile(
+      selected: selected,
+      contentPadding: EdgeInsets.zero,
+      leading: Icon(
+        selected ? Icons.check_circle : Icons.circle_outlined,
+        color: selected ? Theme.of(context).colorScheme.primary : null,
+      ),
+      title: Text(title),
+      subtitle: Text(subtitle),
+      onTap: () => onChanged(value),
+    );
+  }
+}
+
 class _ErrorView extends StatelessWidget {
   const _ErrorView({required this.message, required this.onRetry});
 
@@ -507,6 +958,7 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
   late List<_SampleLane> _mapLanes;
   late int _mapMinMidi;
   late int _mapMaxMidi;
+  int _mapRevision = 0;
   final AudioPlayer _samplePlayer = AudioPlayer();
   final Map<String, WavOverview?> _waveformCache = {};
   final Map<String, Future<WavOverview?>> _waveformFutures = {};
@@ -587,6 +1039,7 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
     _mapLanes = _sortedSampleLanes(_regions);
     _mapMinMidi = _initialMapMinMidi(_regions);
     _mapMaxMidi = _initialMapMaxMidi(_regions, _mapMinMidi);
+    _mapRevision = 0;
     _selectedPath =
         widget.selectedRegion?.path ??
         (_regions.isEmpty ? null : _regions.first.path);
@@ -627,6 +1080,7 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
       if (index < 0) return;
       _regions[index] = updated;
       _ensureMapLanes();
+      _mapRevision++;
       _selectedPath = updated.path;
     });
     final selected = _selectedRegion;
@@ -839,6 +1293,7 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
           _mapLanes = _sortedSampleLanes(_regions);
           _mapMinMidi = _initialMapMinMidi(_regions);
           _mapMaxMidi = _initialMapMaxMidi(_regions, _mapMinMidi);
+          _mapRevision++;
           _selectedPath = newRegion.path;
           if (refreshed != null) {
             _waveformCache[newRegion.path] = refreshed;
@@ -1094,6 +1549,7 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
           rootName: updated.rootName,
         );
       }
+      _mapRevision++;
       _selectedPath = region.path;
     });
     final selected = _selectedRegion;
@@ -1113,6 +1569,7 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
         _regions[index] = _regions[index].copyWith(velocityLayer: value);
       }
       _ensureMapLanes();
+      _mapRevision++;
       _selectedPath = region.path;
     });
     final selected = _selectedRegion;
@@ -1139,6 +1596,7 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
         if (!paths.contains(_regions[index].path)) continue;
         _regions[index] = _regions[index].copyWith(switchPoint: nextLow);
       }
+      _mapRevision++;
       _selectedPath = region.path;
     });
     final selected = _selectedRegion;
@@ -1169,6 +1627,7 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
         if (!paths.contains(_regions[index].path)) continue;
         _regions[index] = _regions[index].copyWith(switchPoint: nextLow);
       }
+      _mapRevision++;
       _selectedPath = region.path;
     });
     final selected = _selectedRegion;
@@ -1257,6 +1716,7 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
         _regions = updatedRegions;
         _baselineRegions = List<PolySampleRegion>.of(updatedRegions);
         _mapLanes = _sortedSampleLanes(_regions);
+        _mapRevision++;
         _selectedPath = selectedPath == null
             ? null
             : changes[selectedPath]?.updated.path ?? selectedPath;
@@ -1391,6 +1851,7 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
                         lanes: _mapLanes,
                         minMidi: _mapMinMidi,
                         maxMidi: _mapMaxMidi,
+                        mapRevision: _mapRevision,
                         onSelectRegion: _selectRegion,
                       ),
                       const SizedBox(height: 12),
@@ -1732,10 +2193,7 @@ class _DraftStatusChip extends StatelessWidget {
 }
 
 class _PreviewGainControl extends StatelessWidget {
-  const _PreviewGainControl({
-    required this.valueDb,
-    required this.onChanged,
-  });
+  const _PreviewGainControl({required this.valueDb, required this.onChanged});
 
   final double valueDb;
   final ValueChanged<double> onChanged;
@@ -1784,6 +2242,7 @@ class _KeyMapSection extends StatefulWidget {
     required this.lanes,
     required this.minMidi,
     required this.maxMidi,
+    required this.mapRevision,
     required this.onSelectRegion,
   });
 
@@ -1792,6 +2251,7 @@ class _KeyMapSection extends StatefulWidget {
   final List<_SampleLane> lanes;
   final int minMidi;
   final int maxMidi;
+  final int mapRevision;
   final ValueChanged<PolySampleRegion> onSelectRegion;
 
   @override
@@ -1815,6 +2275,15 @@ class _KeyMapSectionState extends State<_KeyMapSection> {
         ? event.scrollDelta.dx
         : event.scrollDelta.dy;
     final next = (_scrollController.offset + delta).clamp(
+      _scrollController.position.minScrollExtent,
+      _scrollController.position.maxScrollExtent,
+    );
+    _scrollController.jumpTo(next);
+  }
+
+  void _dragScrollHorizontally(DragUpdateDetails details) {
+    if (!_scrollController.hasClients) return;
+    final next = (_scrollController.offset - details.delta.dx).clamp(
       _scrollController.position.minScrollExtent,
       _scrollController.position.maxScrollExtent,
     );
@@ -1871,16 +2340,13 @@ class _KeyMapSectionState extends State<_KeyMapSection> {
                   );
                   return Listener(
                     onPointerSignal: _scrollHorizontally,
-                    child: Scrollbar(
+                    child: SingleChildScrollView(
                       controller: _scrollController,
-                      thumbVisibility: true,
-                      trackVisibility: true,
-                      child: SingleChildScrollView(
-                        controller: _scrollController,
-                        scrollDirection: Axis.horizontal,
-                        child: SizedBox(
-                          width: canvasWidth,
-                          height: constraints.maxHeight,
+                      scrollDirection: Axis.horizontal,
+                      child: SizedBox(
+                        width: canvasWidth,
+                        height: constraints.maxHeight,
+                        child: RepaintBoundary(
                           child: CustomPaint(
                             painter: _KeyboardMapPainter(
                               regions: widget.instrument.regions,
@@ -1888,11 +2354,13 @@ class _KeyMapSectionState extends State<_KeyMapSection> {
                               lanes: widget.lanes,
                               minMidi: widget.minMidi,
                               maxMidi: widget.maxMidi,
+                              mapRevision: widget.mapRevision,
                               colorScheme: colorScheme,
                             ),
                             child: GestureDetector(
                               behavior: HitTestBehavior.opaque,
-                              onTapDown: (details) {
+                              onHorizontalDragUpdate: _dragScrollHorizontally,
+                              onTapUp: (details) {
                                 final region = _regionAtPosition(
                                   details.localPosition,
                                   Size(canvasWidth, constraints.maxHeight),
@@ -1998,7 +2466,7 @@ class _MapLayout {
     required int minMidi,
     required int maxMidi,
   }) {
-    final sortedLanes = lanes.isEmpty ? _sortedSampleLanes(regions) : lanes;
+    final sortedLanes = _displaySampleLanes(regions, lanes);
 
     final left = sortedLanes.length > 1 ? 58.0 : 18.0;
     final right = size.width - 18.0;
@@ -2063,6 +2531,16 @@ List<_SampleLane> _sortedSampleLanes(List<PolySampleRegion> regions) {
     lanes.add(const _SampleLane(1));
   }
   return lanes;
+}
+
+List<_SampleLane> _displaySampleLanes(
+  List<PolySampleRegion> regions,
+  List<_SampleLane> lanes,
+) {
+  final sorted = lanes.isEmpty
+      ? _sortedSampleLanes(regions)
+      : (List<_SampleLane>.of(lanes)..sort());
+  return sorted.reversed.toList();
 }
 
 class _RangeBounds {
@@ -3532,6 +4010,7 @@ class _DestructiveWaveformControls extends StatelessWidget {
           label: 'Fade out',
           overview: overview,
           value: draft.fadeOutMs,
+          reverse: true,
           onChanged: (value) => onChanged(draft.copyWith(fadeOutMs: value)),
         ),
         const SizedBox(height: 8),
@@ -3878,12 +4357,14 @@ class _MsSlider extends StatelessWidget {
     required this.overview,
     required this.value,
     required this.onChanged,
+    this.reverse = false,
   });
 
   final String label;
   final WavOverview overview;
   final int value;
   final ValueChanged<int> onChanged;
+  final bool reverse;
 
   @override
   Widget build(BuildContext context) {
@@ -3891,6 +4372,7 @@ class _MsSlider extends StatelessWidget {
     final maxMs = math.max(1, (overview.durationSeconds * 1000).round());
     final sliderMax = math.min(maxMs, 10000).toDouble();
     final clamped = value.clamp(0, sliderMax).toDouble();
+    final sliderValue = reverse ? sliderMax - clamped : clamped;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Column(
@@ -3909,12 +4391,13 @@ class _MsSlider extends StatelessWidget {
             ],
           ),
           Slider(
-            value: clamped,
+            value: sliderValue,
             min: 0,
             max: sliderMax,
             divisions: sliderMax.round(),
             label: '$value ms',
-            onChanged: (next) => onChanged(next.round()),
+            onChanged: (next) =>
+                onChanged((reverse ? sliderMax - next : next).round()),
           ),
         ],
       ),
@@ -4336,6 +4819,7 @@ class _KeyboardMapPainter extends CustomPainter {
     required this.lanes,
     required this.minMidi,
     required this.maxMidi,
+    required this.mapRevision,
     required this.colorScheme,
   });
 
@@ -4344,11 +4828,12 @@ class _KeyboardMapPainter extends CustomPainter {
   final List<_SampleLane> lanes;
   final int minMidi;
   final int maxMidi;
+  final int mapRevision;
   final ColorScheme colorScheme;
 
   @override
   void paint(Canvas canvas, Size size) {
-    final sortedLanes = lanes.isEmpty ? _sortedSampleLanes(regions) : lanes;
+    final sortedLanes = _displaySampleLanes(regions, lanes);
     final left = sortedLanes.length > 1 ? 58.0 : 18.0;
     final right = size.width - 18.0;
     final width = math.max(1.0, right - left);
@@ -4521,7 +5006,7 @@ class _KeyboardMapPainter extends CustomPainter {
 
     final selectedRoot = selected?.rootMidi;
     if (selectedRoot != null) {
-      final root = selectedRoot.clamp(minMidi, maxMidi);
+      final root = selectedRoot.clamp(minMidi, maxMidi - 1);
       final x0 = left + ((root - minMidi) / (maxMidi - minMidi)) * width;
       final x1 = left + ((root + 1 - minMidi) / (maxMidi - minMidi)) * width;
       final selectedPaint = Paint()
@@ -4553,7 +5038,13 @@ class _KeyboardMapPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _KeyboardMapPainter oldDelegate) {
-    return true;
+    return oldDelegate.regions != regions ||
+        oldDelegate.selected?.path != selected?.path ||
+        oldDelegate.lanes != lanes ||
+        oldDelegate.minMidi != minMidi ||
+        oldDelegate.maxMidi != maxMidi ||
+        oldDelegate.mapRevision != mapRevision ||
+        oldDelegate.colorScheme != colorScheme;
   }
 
   bool _isBlackNote(int note) {

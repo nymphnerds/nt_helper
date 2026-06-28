@@ -1,0 +1,603 @@
+import 'dart:io';
+
+import 'package:archive/archive.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:nt_helper/poly_multisample/decent_sampler_converter.dart';
+
+void main() {
+  group('DecentSamplerConverter', () {
+    test('maps obvious Soft/Hard Decent groups to velocity layers', () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'decent_converter_test_',
+      );
+      addTearDown(() async {
+        if (await tempDir.exists()) await tempDir.delete(recursive: true);
+      });
+
+      await _writeDummyWavs(tempDir, [
+        'Samples/soft_c4_rr1.wav',
+        'Samples/soft_c4_rr2.wav',
+        'Samples/soft_d4_rr1.wav',
+        'Samples/soft_d4_rr2.wav',
+        'Samples/hard_c4_rr1.wav',
+        'Samples/hard_c4_rr2.wav',
+        'Samples/hard_d4_rr1.wav',
+        'Samples/hard_d4_rr2.wav',
+      ]);
+
+      final preset = File('${tempDir.path}/Deep Drum.dspreset');
+      await preset.writeAsString('''
+<DecentSampler>
+  <groups>
+    <group name="Hard">
+      <sample path="Samples/hard_c4_rr1.wav" rootNote="C4" loNote="C4" hiNote="C4" seqPosition="1"/>
+      <sample path="Samples/hard_c4_rr2.wav" rootNote="C4" loNote="C4" hiNote="C4" seqPosition="2"/>
+      <sample path="Samples/hard_d4_rr1.wav" rootNote="D4" loNote="D4" hiNote="D4" seqPosition="1"/>
+      <sample path="Samples/hard_d4_rr2.wav" rootNote="D4" loNote="D4" hiNote="D4" seqPosition="2"/>
+    </group>
+    <group name="Soft">
+      <sample path="Samples/soft_c4_rr1.wav" rootNote="C4" loNote="C4" hiNote="C4" seqPosition="1"/>
+      <sample path="Samples/soft_c4_rr2.wav" rootNote="C4" loNote="C4" hiNote="C4" seqPosition="2"/>
+      <sample path="Samples/soft_d4_rr1.wav" rootNote="D4" loNote="D4" hiNote="D4" seqPosition="1"/>
+      <sample path="Samples/soft_d4_rr2.wav" rootNote="D4" loNote="D4" hiNote="D4" seqPosition="2"/>
+    </group>
+  </groups>
+</DecentSampler>
+''');
+
+      final outputParent = Directory('${tempDir.path}/out');
+      final result = await DecentSamplerConverter().convert(
+        sourcePath: preset.path,
+        outputParentPath: outputParent.path,
+      );
+
+      expect(result.copiedFiles, 8);
+      expect(result.decisions.join('\n'), contains('Soft=V1'));
+      expect(result.decisions.join('\n'), contains('Hard=V2'));
+
+      final outputFiles =
+          await Directory(result.outputFolders.single)
+                .list()
+                .where(
+                  (entity) => entity is File && entity.path.endsWith('.wav'),
+                )
+                .map((entity) => entity.uri.pathSegments.last)
+                .toList()
+            ..sort();
+
+      expect(outputFiles, isNot(contains(contains('_dup'))));
+      expect(outputFiles, contains('Deep_Drum_C4_V1_RR1.wav'));
+      expect(outputFiles, contains('Deep_Drum_C4_V1_RR2.wav'));
+      expect(outputFiles, contains('Deep_Drum_C4_V2_RR1.wav'));
+      expect(outputFiles, contains('Deep_Drum_C4_V2_RR2.wav'));
+      expect(outputFiles, contains('Deep_Drum_D4_V1_RR1.wav'));
+      expect(outputFiles, contains('Deep_Drum_D4_V2_RR2.wav'));
+    });
+
+    test('ignores macOS archive metadata entries', () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'decent_converter_macos_junk_test_',
+      );
+      addTearDown(() async {
+        if (await tempDir.exists()) await tempDir.delete(recursive: true);
+      });
+
+      final archive = Archive()
+        ..addFile(
+          ArchiveFile(
+            'Antique Harmonium.dspreset',
+            _singleSamplePreset.length,
+            _singleSamplePreset.codeUnits,
+          ),
+        )
+        ..addFile(ArchiveFile('Samples/C4.wav', _dummyWav.length, _dummyWav))
+        ..addFile(
+          ArchiveFile(
+            '__MACOSX/._Antique Harmonium.dspreset',
+            _junkPreset.length,
+            _junkPreset.codeUnits,
+          ),
+        )
+        ..addFile(
+          ArchiveFile(
+            '._Antique Harmonium Swells.dspreset',
+            _junkPreset.length,
+            _junkPreset.codeUnits,
+          ),
+        )
+        ..addFile(ArchiveFile('.DS_Store', 0, const <int>[]));
+
+      final source = File('${tempDir.path}/Antique Harmonium.dslibrary');
+      await source.writeAsBytes(ZipEncoder().encode(archive), flush: true);
+
+      final result = await DecentSamplerConverter().convert(
+        sourcePath: source.path,
+        outputParentPath: '${tempDir.path}/out',
+      );
+
+      expect(result.outputFolders, hasLength(1));
+      expect(result.outputFolders.single, endsWith('Antique_Harmonium'));
+      expect(result.copiedFiles, 1);
+      expect(result.warnings, isEmpty);
+    });
+
+    test('imports Decent Sampler zip archives', () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'decent_converter_zip_test_',
+      );
+      addTearDown(() async {
+        if (await tempDir.exists()) await tempDir.delete(recursive: true);
+      });
+
+      final archive = Archive()
+        ..addFile(
+          ArchiveFile(
+            'Zip Library.dspreset',
+            _singleSamplePreset.length,
+            _singleSamplePreset.codeUnits,
+          ),
+        )
+        ..addFile(ArchiveFile('Samples/C4.wav', _dummyWav.length, _dummyWav));
+
+      final source = File('${tempDir.path}/Zip Library.zip');
+      await source.writeAsBytes(ZipEncoder().encode(archive), flush: true);
+
+      final result = await DecentSamplerConverter().convert(
+        sourcePath: source.path,
+        outputParentPath: '${tempDir.path}/out',
+      );
+
+      expect(result.copiedFiles, 1);
+      expect(result.outputFolders.single, endsWith('Zip_Library'));
+      expect(
+        await File(
+          '${result.outputFolders.single}/Zip_Library_C4.wav',
+        ).exists(),
+        isTrue,
+      );
+    });
+
+    test('lets user choose velocity layers for ambiguous groups', () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'decent_converter_choice_test_',
+      );
+      addTearDown(() async {
+        if (await tempDir.exists()) await tempDir.delete(recursive: true);
+      });
+
+      await _writeDummyWavs(tempDir, [
+        'Samples/g1_c4.wav',
+        'Samples/g1_d4.wav',
+        'Samples/g2_c4.wav',
+        'Samples/g2_d4.wav',
+      ]);
+
+      final preset = File('${tempDir.path}/Kalimba Swarm.dspreset');
+      await preset.writeAsString('''
+<DecentSampler>
+  <groups>
+    <group name="Group 1">
+      <sample path="Samples/g1_c4.wav" rootNote="C4" loNote="C4" hiNote="C4"/>
+      <sample path="Samples/g1_d4.wav" rootNote="D4" loNote="D4" hiNote="D4"/>
+    </group>
+    <group name="Group 2">
+      <sample path="Samples/g2_c4.wav" rootNote="C4" loNote="C4" hiNote="C4"/>
+      <sample path="Samples/g2_d4.wav" rootNote="D4" loNote="D4" hiNote="D4"/>
+    </group>
+  </groups>
+</DecentSampler>
+''');
+
+      final converter = DecentSamplerConverter();
+      final analysis = await converter.analyze(sourcePath: preset.path);
+      expect(analysis.hasAmbiguousOverlaps, isTrue);
+      expect(analysis.groups.map((group) => group.name), [
+        'Group 1',
+        'Group 2',
+      ]);
+
+      final result = await converter.convert(
+        sourcePath: preset.path,
+        outputParentPath: '${tempDir.path}/out',
+        options: const DecentSamplerConvertOptions(
+          groupHandling: DecentSamplerGroupHandling.velocityLayers,
+        ),
+      );
+
+      expect(result.warnings, isEmpty);
+      expect(result.decisions.join('\n'), contains('user-selected velocity'));
+
+      final outputFiles =
+          await Directory(result.outputFolders.single)
+                .list()
+                .where(
+                  (entity) => entity is File && entity.path.endsWith('.wav'),
+                )
+                .map((entity) => entity.uri.pathSegments.last)
+                .toList()
+            ..sort();
+
+      expect(outputFiles, contains('Kalimba_Swarm_C4_V1.wav'));
+      expect(outputFiles, contains('Kalimba_Swarm_C4_V2.wav'));
+      expect(outputFiles, contains('Kalimba_Swarm_D4_V1.wav'));
+      expect(outputFiles, contains('Kalimba_Swarm_D4_V2.wav'));
+    });
+
+    test('imports already extracted Decent Sampler folders', () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'decent_converter_folder_test_',
+      );
+      addTearDown(() async {
+        if (await tempDir.exists()) await tempDir.delete(recursive: true);
+      });
+
+      final libraryDir = Directory('${tempDir.path}/Extracted Library');
+      await libraryDir.create(recursive: true);
+      await _writeDummyWavs(libraryDir, ['Samples/C4.wav']);
+      await File('${libraryDir.path}/Extracted.dspreset').writeAsString('''
+<DecentSampler>
+  <groups>
+    <group>
+      <sample path="Samples/C4.wav" rootNote="C4"/>
+    </group>
+  </groups>
+</DecentSampler>
+''');
+
+      final result = await DecentSamplerConverter().convert(
+        sourcePath: libraryDir.path,
+        outputParentPath: '${tempDir.path}/out',
+      );
+
+      expect(result.copiedFiles, 1);
+      expect(result.outputFolders.single, endsWith('Extracted'));
+      expect(
+        await File('${result.outputFolders.single}/Extracted_C4.wav').exists(),
+        isTrue,
+      );
+    });
+
+    test('analyzes every preset in extracted Decent folders', () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'decent_converter_multi_preset_analysis_test_',
+      );
+      addTearDown(() async {
+        if (await tempDir.exists()) await tempDir.delete(recursive: true);
+      });
+
+      final libraryDir = Directory('${tempDir.path}/Multi Preset Library');
+      await libraryDir.create(recursive: true);
+      await _writeDummyWavs(libraryDir, [
+        'Samples/plain.wav',
+        'Samples/dry.wav',
+        'Samples/glitch.wav',
+      ]);
+      await File('${libraryDir.path}/A Plain.dspreset').writeAsString('''
+<DecentSampler>
+  <groups>
+    <group name="Plain">
+      <sample path="Samples/plain.wav" rootNote="C4"/>
+    </group>
+  </groups>
+</DecentSampler>
+''');
+      await File('${libraryDir.path}/B Ambiguous.dspreset').writeAsString('''
+<DecentSampler>
+  <groups>
+    <group name="Dry" tags="Dry">
+      <sample path="Samples/dry.wav" rootNote="C4"/>
+    </group>
+    <group name="Glitch" tags="Glitch">
+      <sample path="Samples/glitch.wav" rootNote="C4"/>
+    </group>
+  </groups>
+</DecentSampler>
+''');
+
+      final analysis = await DecentSamplerConverter().analyze(
+        sourcePath: libraryDir.path,
+      );
+
+      expect(analysis.hasAmbiguousOverlaps, isTrue);
+      expect(
+        analysis.groups.map((group) => group.name),
+        containsAll([
+          'A_Plain / Plain',
+          'B_Ambiguous / Dry',
+          'B_Ambiguous / Glitch',
+        ]),
+      );
+    });
+
+    test('summarizes repaired duplicate round robins as decisions', () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'decent_converter_duplicate_rr_test_',
+      );
+      addTearDown(() async {
+        if (await tempDir.exists()) await tempDir.delete(recursive: true);
+      });
+
+      await _writeDummyWavs(tempDir, [
+        'Samples/c4_rr1_a.wav',
+        'Samples/c4_rr1_b.wav',
+      ]);
+      final preset = File('${tempDir.path}/Duplicate RR.dspreset');
+      await preset.writeAsString('''
+<DecentSampler>
+  <groups>
+    <group>
+      <sample path="Samples/c4_rr1_a.wav" rootNote="C4" seqPosition="1"/>
+      <sample path="Samples/c4_rr1_b.wav" rootNote="C4" seqPosition="1"/>
+    </group>
+  </groups>
+</DecentSampler>
+''');
+
+      final result = await DecentSamplerConverter().convert(
+        sourcePath: preset.path,
+        outputParentPath: '${tempDir.path}/out',
+      );
+
+      expect(result.warnings, isEmpty);
+      expect(result.decisions.join('\n'), contains('repaired 1 duplicate'));
+      expect(
+        await File(
+          '${result.outputFolders.single}/Duplicate_RR_C4_RR1.wav',
+        ).exists(),
+        isTrue,
+      );
+      expect(
+        await File(
+          '${result.outputFolders.single}/Duplicate_RR_C4_RR2.wav',
+        ).exists(),
+        isTrue,
+      );
+    });
+
+    test(
+      'splits structural banks while preserving group round robins',
+      () async {
+        final tempDir = await Directory.systemTemp.createTemp(
+          'decent_converter_group_rr_bank_test_',
+        );
+        addTearDown(() async {
+          if (await tempDir.exists()) await tempDir.delete(recursive: true);
+        });
+
+        await _writeDummyWavs(tempDir, [
+          'Samples/l1_c4_rr1.wav',
+          'Samples/l1_c4_rr2.wav',
+          'Samples/l1_d4_rr1.wav',
+          'Samples/l1_d4_rr2.wav',
+          'Samples/l2_c4_rr1.wav',
+          'Samples/l2_c4_rr2.wav',
+          'Samples/l2_d4_rr1.wav',
+          'Samples/l2_d4_rr2.wav',
+        ]);
+        final preset = File('${tempDir.path}/Isolation.dspreset');
+        await preset.writeAsString('''
+<DecentSampler>
+  <groups>
+    <group name="L1 RR1" seqPosition="1" ampVelTrack="1">
+      <sample path="Samples/l1_c4_rr1.wav" rootNote="C4"/>
+      <sample path="Samples/l1_d4_rr1.wav" rootNote="D4"/>
+    </group>
+    <group name="L1 RR2" seqPosition="2" ampVelTrack="1">
+      <sample path="Samples/l1_c4_rr2.wav" rootNote="C4"/>
+      <sample path="Samples/l1_d4_rr2.wav" rootNote="D4"/>
+    </group>
+    <group name="L2 RR1" seqPosition="1" ampVelTrack="1">
+      <sample path="Samples/l2_c4_rr1.wav" rootNote="C4"/>
+      <sample path="Samples/l2_d4_rr1.wav" rootNote="D4"/>
+    </group>
+    <group name="L2 RR2" seqPosition="2" ampVelTrack="1">
+      <sample path="Samples/l2_c4_rr2.wav" rootNote="C4"/>
+      <sample path="Samples/l2_d4_rr2.wav" rootNote="D4"/>
+    </group>
+  </groups>
+  <ui>
+    <labeled-knob label="Dynamics">
+      <binding level="group" position="0" parameter="AMP_VOLUME"/>
+      <binding level="group" position="1" parameter="AMP_VOLUME"/>
+      <binding level="group" position="2" parameter="AMP_VOLUME"/>
+      <binding level="group" position="3" parameter="AMP_VOLUME"/>
+    </labeled-knob>
+  </ui>
+</DecentSampler>
+''');
+
+        final converter = DecentSamplerConverter();
+        final analysis = await converter.analyze(sourcePath: preset.path);
+        expect(analysis.hasAmbiguousOverlaps, isTrue);
+        expect(analysis.structureSummary, contains('2 labelled group layer'));
+        expect(analysis.structureSummary, contains('RR 1-2'));
+        expect(analysis.structureSummary, contains('Dynamics'));
+        expect(
+          analysis.structureSummary,
+          contains('control group volume for positions 0, 1, 2, 3'),
+        );
+        expect(
+          analysis.recommendedGroupHandling,
+          DecentSamplerGroupHandling.splitFolders,
+        );
+
+        final result = await converter.convert(
+          sourcePath: preset.path,
+          outputParentPath: '${tempDir.path}/out',
+          options: const DecentSamplerConvertOptions(
+            groupHandling: DecentSamplerGroupHandling.splitFolders,
+          ),
+        );
+
+        expect(result.outputFolders, hasLength(2));
+        expect(result.copiedFiles, 8);
+        final l1Folder = result.outputFolders.singleWhere(
+          (folder) => folder.endsWith('Isolation_L1'),
+        );
+        final l2Folder = result.outputFolders.singleWhere(
+          (folder) => folder.endsWith('Isolation_L2'),
+        );
+
+        expect(
+          await File('$l1Folder/Isolation_L1_C4_RR1.wav').exists(),
+          isTrue,
+        );
+        expect(
+          await File('$l1Folder/Isolation_L1_C4_RR2.wav').exists(),
+          isTrue,
+        );
+        expect(
+          await File('$l2Folder/Isolation_L2_D4_RR1.wav').exists(),
+          isTrue,
+        );
+        expect(
+          await File('$l2Folder/Isolation_L2_D4_RR2.wav').exists(),
+          isTrue,
+        );
+        expect(result.warnings, isEmpty);
+      },
+    );
+
+    test(
+      'maps structural banks to velocity layers while preserving round robins',
+      () async {
+        final tempDir = await Directory.systemTemp.createTemp(
+          'decent_converter_group_rr_velocity_test_',
+        );
+        addTearDown(() async {
+          if (await tempDir.exists()) await tempDir.delete(recursive: true);
+        });
+
+        await _writeDummyWavs(tempDir, [
+          'Samples/l1_c4_rr1.wav',
+          'Samples/l1_c4_rr2.wav',
+          'Samples/l2_c4_rr1.wav',
+          'Samples/l2_c4_rr2.wav',
+        ]);
+        final preset = File('${tempDir.path}/Layered RR.dspreset');
+        await preset.writeAsString('''
+<DecentSampler>
+  <groups>
+    <group name="L1 RR1" seqPosition="1">
+      <sample path="Samples/l1_c4_rr1.wav" rootNote="C4"/>
+    </group>
+    <group name="L1 RR2" seqPosition="2">
+      <sample path="Samples/l1_c4_rr2.wav" rootNote="C4"/>
+    </group>
+    <group name="L2 RR1" seqPosition="1">
+      <sample path="Samples/l2_c4_rr1.wav" rootNote="C4"/>
+    </group>
+    <group name="L2 RR2" seqPosition="2">
+      <sample path="Samples/l2_c4_rr2.wav" rootNote="C4"/>
+    </group>
+  </groups>
+</DecentSampler>
+''');
+
+        final result = await DecentSamplerConverter().convert(
+          sourcePath: preset.path,
+          outputParentPath: '${tempDir.path}/out',
+          options: const DecentSamplerConvertOptions(
+            groupHandling: DecentSamplerGroupHandling.velocityLayers,
+          ),
+        );
+
+        expect(result.outputFolders, hasLength(1));
+        expect(result.copiedFiles, 4);
+        final outputFolder = result.outputFolders.single;
+        expect(
+          await File('$outputFolder/Layered_RR_C4_V1_RR1.wav').exists(),
+          isTrue,
+        );
+        expect(
+          await File('$outputFolder/Layered_RR_C4_V1_RR2.wav').exists(),
+          isTrue,
+        );
+        expect(
+          await File('$outputFolder/Layered_RR_C4_V2_RR1.wav').exists(),
+          isTrue,
+        );
+        expect(
+          await File('$outputFolder/Layered_RR_C4_V2_RR2.wav').exists(),
+          isTrue,
+        );
+        expect(result.warnings, isEmpty);
+      },
+    );
+
+    test('keeps pure group-level round robins as round robins', () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'decent_converter_pure_group_rr_test_',
+      );
+      addTearDown(() async {
+        if (await tempDir.exists()) await tempDir.delete(recursive: true);
+      });
+
+      await _writeDummyWavs(tempDir, [
+        'Samples/c4_rr1.wav',
+        'Samples/c4_rr2.wav',
+        'Samples/d4_rr1.wav',
+        'Samples/d4_rr2.wav',
+      ]);
+      final preset = File('${tempDir.path}/Pure RR.dspreset');
+      await preset.writeAsString('''
+<DecentSampler>
+  <groups>
+    <group name="RR1" seqPosition="1">
+      <sample path="Samples/c4_rr1.wav" rootNote="C4"/>
+      <sample path="Samples/d4_rr1.wav" rootNote="D4"/>
+    </group>
+    <group name="RR2" seqPosition="2">
+      <sample path="Samples/c4_rr2.wav" rootNote="C4"/>
+      <sample path="Samples/d4_rr2.wav" rootNote="D4"/>
+    </group>
+  </groups>
+</DecentSampler>
+''');
+
+      final result = await DecentSamplerConverter().convert(
+        sourcePath: preset.path,
+        outputParentPath: '${tempDir.path}/out',
+      );
+
+      expect(result.outputFolders, hasLength(1));
+      expect(result.copiedFiles, 4);
+      final outputFolder = result.outputFolders.single;
+      expect(await File('$outputFolder/Pure_RR_C4_RR1.wav').exists(), isTrue);
+      expect(await File('$outputFolder/Pure_RR_C4_RR2.wav').exists(), isTrue);
+      expect(await File('$outputFolder/Pure_RR_D4_RR1.wav').exists(), isTrue);
+      expect(await File('$outputFolder/Pure_RR_D4_RR2.wav').exists(), isTrue);
+      expect(
+        await Directory(
+          outputFolder,
+        ).list().where((entity) => entity.path.contains('_V')).isEmpty,
+        isTrue,
+      );
+      expect(result.warnings, isEmpty);
+    });
+  });
+}
+
+Future<void> _writeDummyWavs(Directory baseDir, List<String> paths) async {
+  for (final path in paths) {
+    final file = File('${baseDir.path}/$path');
+    await file.parent.create(recursive: true);
+    await file.writeAsBytes([0x52, 0x49, 0x46, 0x46], flush: true);
+  }
+}
+
+const _singleSamplePreset = '''
+<DecentSampler>
+  <groups>
+    <group>
+      <sample path="Samples/C4.wav" rootNote="C4"/>
+    </group>
+  </groups>
+</DecentSampler>
+''';
+
+const _junkPreset = '''
+This is an AppleDouble resource fork, not a Decent Sampler preset.
+''';
+
+const _dummyWav = [0x52, 0x49, 0x46, 0x46];

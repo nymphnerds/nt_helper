@@ -13,11 +13,24 @@ This fork/branch contains an experimental Windows test build for a new Poly Mult
 - Added a first Decent Sampler import path from the `Samples` workspace.
 - Accepts `.dspreset`, `.dslibrary`, and `.zip` sources.
 - Reads `.dslibrary`/`.zip` directly without requiring manual unpacking.
+- Also accepts already extracted Decent Sampler folders.
+- Remembers the last selected local sample folder, Decent source folder/file location, and Decent output folder for the next picker session.
 - Exports Disting NT-ready WAV folders using filename tags for root note, switch/low note, velocity layer, and round robin.
 - Copies Decent `loopStart`/`loopEnd` into WAV `smpl` metadata where possible.
 - Writes `_CONVERSION_REPORT.md` into each converted output folder.
 - Keeps the converter WAV-only for now, matching the Disting NT manual. Non-WAV source audio is reported instead of silently converted.
 - Uses a tolerant Decent parser: it only needs sample paths, root notes, velocity ranges, round-robin positions, and loop points, and ignores unrelated/messy XML where possible.
+- Adds a Decent import strategy dialog for libraries whose groups overlap or cannot be mapped unambiguously.
+- The strategy report is evidence-based rather than name-based:
+  - real velocity splits are detected from `loVel`/`hiVel`;
+  - round robins are detected from `seqPosition` and RR-style group/file labels;
+  - controller/macro layers are detected from Decent `binding level="group"` entries;
+  - group volume bindings such as `AMP_VOLUME` are reported as controller fades/mixes rather than assumed velocity layers;
+  - group enable bindings such as `ENABLED` are reported as switches/articulations/options;
+  - drum/category groups are shown from their group labels instead of being forced into velocity layers.
+- Import choices now stay neutral: convert groups as velocity layers, split groups/layers/articulations into separate Disting folders, convert one selected group, or keep the default parser mapping.
+- Pure round-robin groups are kept as round robins and are not promoted to fake velocity/bank layers.
+- Duplicate requested RR slots are repaired by assigning the next free RR number and reporting the decision.
 - Smoke-tested successfully with a real Decent Sampler library in the Windows test build.
 - Fixed unreliable toggling between `Samples` and `Routing`.
 - Changed the bottom `Parameters / Routing / Samples` switcher to single-select so clicking `Routing` always leaves the sample page.
