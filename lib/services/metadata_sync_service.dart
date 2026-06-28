@@ -5,11 +5,12 @@ import 'package:flutter/foundation.dart';
 import 'package:nt_helper/db/database.dart';
 import 'package:nt_helper/db/daos/metadata_dao.dart'; // Import the DAO type
 import 'package:nt_helper/domain/disting_nt_sysex.dart'
-    show AlgorithmInfo, ParameterInfo;
+    show AlgorithmInfo, ParameterInfo, Specification;
 
 import 'package:nt_helper/domain/i_disting_midi_manager.dart'
     show IDistingMidiManager;
 import 'package:nt_helper/models/firmware_version.dart';
+import 'package:nt_helper/services/algorithm_guid_utils.dart';
 import 'package:nt_helper/services/elf_guid_extractor.dart';
 import 'package:nt_helper/interfaces/impl/preset_file_system_impl.dart';
 
@@ -19,11 +20,6 @@ class MetadataSyncService {
   final AppDatabase _database;
 
   MetadataSyncService(this._distingManager, this._database);
-
-  /// Factory GUIDs are lowercase alphanumeric, possibly space-padded to 4 chars
-  /// (e.g. `spcn`, `env2`, `lfo `). Community plugins use uppercase (e.g. `TEST`).
-  static bool _isFactoryGuid(String guid) =>
-      RegExp(r'^[a-z0-9 ]+$').hasMatch(guid);
 
   Future<FirmwareVersion> _requestFirmwareVersionSafe() async {
     try {
@@ -35,9 +31,32 @@ class MetadataSyncService {
     }
   }
 
-  /// Compute spec values for scanning: substitute 1 (clamped) for specs that default to 0.
+  static final RegExp _usefulScanSpecNamePattern = RegExp(
+    r'\b(channels?|inputs?|outputs?|sends?|stereo|voices?)\b',
+    caseSensitive: false,
+  );
+
+  bool _isUsefulOfflineCountSpec(Specification spec) {
+    if (spec.type != 0 && spec.type != 2) return false;
+    return _usefulScanSpecNamePattern.hasMatch(spec.name);
+  }
+
+  int _scanSpecValue(Specification spec) {
+    if (!_isUsefulOfflineCountSpec(spec)) return spec.safeDefaultValue;
+
+    final usefulValue = (spec.max >= 2 ? 2 : 1).clamp(spec.min, spec.max);
+    if (spec.defaultValue >= usefulValue && spec.defaultValue <= spec.max) {
+      return spec.defaultValue;
+    }
+    return usefulValue;
+  }
+
+  /// Compute representative spec values for metadata scanning.
+  ///
+  /// The database stores one metadata shape per algorithm, so scan count-like
+  /// channel specs with a useful small value instead of a boring single channel.
   List<int> _scanSpecValues(AlgorithmInfo algoInfo) {
-    return algoInfo.specifications.map((s) => s.safeDefaultValue).toList();
+    return algoInfo.specifications.map(_scanSpecValue).toList();
   }
 
   /// Poll until the preset count matches [expected], or [maxAttempts] is reached.
@@ -430,7 +449,7 @@ class MetadataSyncService {
       // Community plugins (uppercase GUIDs) cause memory issues during sync
       // and are skipped here — their basic info is already cached above.
       final orderedAlgorithms = allAlgorithmInfo
-          .where((a) => _isFactoryGuid(a.guid))
+          .where((a) => AlgorithmGuidUtils.isFactoryGuid(a.guid))
           .toList();
       totalAlgorithms = orderedAlgorithms.length;
 
