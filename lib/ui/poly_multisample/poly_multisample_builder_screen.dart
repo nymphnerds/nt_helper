@@ -1,17 +1,18 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
-import 'dart:typed_data';
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:nt_helper/cubit/disting_cubit.dart';
 import 'package:nt_helper/domain/i_disting_midi_manager.dart';
 import 'package:path/path.dart' as p;
 
+import '../../poly_multisample/decent_sampler_converter.dart';
 import '../../poly_multisample/poly_multisample_models.dart';
 import '../../poly_multisample/poly_multisample_parser.dart';
 import '../../poly_multisample/wav_metadata.dart';
@@ -119,6 +120,103 @@ class _PolyMultisampleBuilderScreenState
     }
   }
 
+  Future<void> _importDecentSampler() async {
+    final source = await FilePicker.pickFiles(
+      dialogTitle: 'Choose Decent Sampler library or preset',
+      type: FileType.custom,
+      allowedExtensions: const ['dspreset', 'dslibrary', 'zip'],
+      allowMultiple: false,
+    );
+    final sourcePath = source?.files.single.path;
+    if (sourcePath == null) return;
+
+    final outputPath = await FilePicker.getDirectoryPath(
+      dialogTitle: 'Choose folder for Disting NT output',
+    );
+    if (outputPath == null) return;
+
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final result = await DecentSamplerConverter().convert(
+        sourcePath: sourcePath,
+        outputParentPath: outputPath,
+      );
+      if (!mounted) return;
+      final firstFolder = result.outputFolders.isEmpty
+          ? null
+          : result.outputFolders.first;
+      if (firstFolder == null) {
+        throw Exception('No output folder was created.');
+      }
+      final instrument = await PolyMultisampleFolderReader.readDirectory(
+        firstFolder,
+      );
+      if (!mounted) return;
+      setState(() {
+        _instrument = instrument;
+        _selectedRegion = instrument.regions.isEmpty
+            ? null
+            : instrument.regions.first;
+      });
+      await _showConversionResult(result);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _error = e.toString());
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _loading = false);
+      }
+    }
+  }
+
+  Future<void> _showConversionResult(
+    DecentSamplerConversionResult result,
+  ) async {
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Decent import complete'),
+        content: SizedBox(
+          width: 520,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(result.summary),
+              const SizedBox(height: 12),
+              Text(
+                result.outputFolders.join('\n'),
+                maxLines: 4,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              if (result.warnings.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Text(
+                  result.warnings.take(6).join('\n'),
+                  maxLines: 6,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+              ],
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -174,7 +272,7 @@ class _PolyMultisampleBuilderScreenState
                 ),
                 const SizedBox(width: 8),
                 OutlinedButton.icon(
-                  onPressed: null,
+                  onPressed: _loading ? null : _importDecentSampler,
                   icon: const Icon(Icons.file_upload_outlined),
                   label: const Text('Import'),
                 ),
@@ -198,6 +296,7 @@ class _PolyMultisampleBuilderScreenState
               ? _EmptyBuilderView(
                   onChooseFolder: _chooseFolder,
                   onChooseNtSdFolder: _chooseNtSdFolder,
+                  onImportDecentSampler: _importDecentSampler,
                 )
               : _InstrumentEditor(
                   instrument: instrument,
@@ -247,10 +346,12 @@ class _EmptyBuilderView extends StatelessWidget {
   const _EmptyBuilderView({
     required this.onChooseFolder,
     required this.onChooseNtSdFolder,
+    required this.onImportDecentSampler,
   });
 
   final VoidCallback onChooseFolder;
   final VoidCallback onChooseNtSdFolder;
+  final VoidCallback onImportDecentSampler;
 
   @override
   Widget build(BuildContext context) {
@@ -292,6 +393,11 @@ class _EmptyBuilderView extends StatelessWidget {
                   onPressed: onChooseFolder,
                   icon: const Icon(Icons.folder_open),
                   label: const Text('Open Local Folder'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: onImportDecentSampler,
+                  icon: const Icon(Icons.file_upload_outlined),
+                  label: const Text('Import Decent'),
                 ),
               ],
             ),
@@ -416,11 +522,11 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
   String? _loopPreviewFilePath;
   bool _playerPlaying = false;
   bool _loopPreviewEnabled = false;
-  bool _restartingLoopPreview = false;
   bool _applying = false;
   bool _savingLoop = false;
   bool _renderingWav = false;
   bool _autoPreviewOnSelect = false;
+  double _previewGainDb = 0;
   _WaveformMode _waveformMode = _WaveformMode.metadata;
 
   @override
@@ -441,12 +547,13 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
           _playingPath = null;
         }
       });
-      if (state == PlayerState.completed && _loopPreviewEnabled) {
-        unawaited(_handlePlayerComplete());
-      }
     });
     _playerCompleteSubscription = _samplePlayer.onPlayerComplete.listen((_) {
-      unawaited(_handlePlayerComplete());
+      if (_loopPreviewEnabled || !mounted) return;
+      setState(() {
+        _playingPath = null;
+        _playerPlaying = false;
+      });
     });
   }
 
@@ -526,10 +633,6 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
     if (selected != null) {
       widget.onSelectRegion(selected);
     }
-  }
-
-  void _updateSelectedRegion(PolySampleRegion updated) {
-    _updateRegion(updated);
   }
 
   void _updateLoopFor(PolySampleRegion region, _LoopMarkerDraft markers) {
@@ -821,7 +924,7 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
         _loopDrafts[region.path] ?? _LoopMarkerDraft.fromWaveform(overview);
     await _samplePlayer.stop();
     _clearLoopPreviewFile();
-    await _samplePlayer.setVolume(_previewGainForPath(region.path));
+    await _samplePlayer.setVolume(_previewGainLinear);
     var sourcePath = region.path;
     if (_loopPreviewEnabled) {
       final loopPath = _waveformMode == _WaveformMode.destructive
@@ -846,14 +949,19 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
 
   void _syncPreviewGainFor(String path) {
     if (_playingPath != path || !_playerPlaying) return;
-    unawaited(_samplePlayer.setVolume(_previewGainForPath(path)));
+    unawaited(_samplePlayer.setVolume(_previewGainLinear));
   }
 
-  double _previewGainForPath(String path) {
-    if (_waveformMode != _WaveformMode.destructive) return 1;
-    final draft = _wavEditDrafts[path];
-    if (draft == null) return 1;
-    return _gainDbToLinear(draft.gainDb).clamp(0.0, 1.0);
+  double get _previewGainLinear {
+    return math.pow(10, _previewGainDb / 20).toDouble().clamp(0.0, 2.0);
+  }
+
+  void _setPreviewGainDb(double value) {
+    setState(() => _previewGainDb = value);
+    final path = _playingPath;
+    if (path != null) {
+      _syncPreviewGainFor(path);
+    }
   }
 
   Future<void> _setLoopPreview(bool enabled) async {
@@ -861,9 +969,10 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
     setState(() => _loopPreviewEnabled = enabled);
     if (!enabled) {
       await _samplePlayer.setReleaseMode(ReleaseMode.release);
-      _clearLoopPreviewFile();
       if (selected != null && _playingPath == selected.path && _playerPlaying) {
         await _playSamplePreview(selected);
+      } else {
+        _clearLoopPreviewFile();
       }
       return;
     }
@@ -968,37 +1077,6 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('Could not open folder: $e')));
-    }
-  }
-
-  Future<void> _handlePlayerComplete() async {
-    if (_restartingLoopPreview) return;
-    final path = _playingPath;
-    if (!_loopPreviewEnabled || path == null) {
-      if (!mounted) return;
-      setState(() {
-        _playingPath = null;
-        _playerPlaying = false;
-        _loopPreviewEnabled = false;
-      });
-      return;
-    }
-    _restartingLoopPreview = true;
-    PolySampleRegion? region;
-    try {
-      for (final candidate in _regions) {
-        if (candidate.path == path) {
-          region = candidate;
-          break;
-        }
-      }
-      if (region == null) return;
-      await _playSamplePreview(region);
-    } finally {
-      _restartingLoopPreview = false;
-      if (mounted && _loopPreviewEnabled && _playingPath == path) {
-        setState(() => _playerPlaying = true);
-      }
     }
   }
 
@@ -1274,6 +1352,11 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
                       setState(() => _autoPreviewOnSelect = value),
                 ),
                 const SizedBox(width: 8),
+                _PreviewGainControl(
+                  valueDb: _previewGainDb,
+                  onChanged: _setPreviewGainDb,
+                ),
+                const SizedBox(width: 8),
                 OutlinedButton.icon(
                   onPressed: _hasDraftChanges && !_applying
                       ? _discardDraft
@@ -1364,11 +1447,6 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
                       : _wavEditDrafts[selected.path],
                   waveformMode: _waveformMode,
                   renderingWav: _renderingWav,
-                  onChangeRegion: _updateSelectedRegion,
-                  onChangeRoot: _updateRootFor,
-                  onChangeVelocity: _updateVelocityFor,
-                  onChangeLow: _updateRangeLowFor,
-                  onChangeHigh: _updateRangeHighFor,
                   onChangeLoop: _updateLoopFor,
                   onChangeLoopEnabled: _setLoopEnabledFor,
                   onChangeWavEdit: _updateWavEditFor,
@@ -1648,6 +1726,52 @@ class _DraftStatusChip extends StatelessWidget {
           fontSize: 12,
           fontWeight: FontWeight.w800,
         ),
+      ),
+    );
+  }
+}
+
+class _PreviewGainControl extends StatelessWidget {
+  const _PreviewGainControl({
+    required this.valueDb,
+    required this.onChanged,
+  });
+
+  final double valueDb;
+  final ValueChanged<double> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    return SizedBox(
+      width: 190,
+      child: Row(
+        children: [
+          Icon(Icons.volume_down, size: 18, color: colorScheme.primary),
+          const SizedBox(width: 4),
+          Expanded(
+            child: Slider(
+              value: valueDb,
+              min: -36,
+              max: 6,
+              divisions: 42,
+              label: '${valueDb.round()} dB',
+              onChanged: onChanged,
+            ),
+          ),
+          SizedBox(
+            width: 42,
+            child: Text(
+              '${valueDb.round()} dB',
+              textAlign: TextAlign.right,
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -2266,6 +2390,7 @@ const double _sampleListSeparatorHeight = 1;
 
 class _SampleListState extends State<_SampleList> {
   final ScrollController _scrollController = ScrollController();
+  final FocusNode _focusNode = FocusNode(debugLabel: 'PolySampleList');
   String? _lastSelectedPath;
 
   @override
@@ -2302,64 +2427,119 @@ class _SampleListState extends State<_SampleList> {
 
   @override
   void dispose() {
+    _focusNode.dispose();
     _scrollController.dispose();
     super.dispose();
+  }
+
+  KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
+      return _selectRelative(1);
+    }
+    if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
+      return _selectRelative(-1);
+    }
+    if (event.logicalKey == LogicalKeyboardKey.home) {
+      return _selectIndex(0);
+    }
+    if (event.logicalKey == LogicalKeyboardKey.end) {
+      return _selectIndex(widget.regions.length - 1);
+    }
+    return KeyEventResult.ignored;
+  }
+
+  KeyEventResult _selectRelative(int delta) {
+    if (widget.regions.isEmpty) return KeyEventResult.ignored;
+    final selectedPath = widget.selected?.path;
+    final currentIndex = selectedPath == null
+        ? -1
+        : widget.regions.indexWhere((region) => region.path == selectedPath);
+    final fallbackIndex = delta > 0 ? 0 : widget.regions.length - 1;
+    final nextIndex = currentIndex < 0
+        ? fallbackIndex
+        : (currentIndex + delta).clamp(0, widget.regions.length - 1).toInt();
+    return _selectIndex(nextIndex);
+  }
+
+  KeyEventResult _selectIndex(int index) {
+    if (index < 0 || index >= widget.regions.length) {
+      return KeyEventResult.ignored;
+    }
+    final region = widget.regions[index];
+    if (region.path == widget.selected?.path) {
+      return KeyEventResult.handled;
+    }
+    _focusNode.requestFocus();
+    widget.onSelectRegion(region);
+    return KeyEventResult.handled;
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
-    return Container(
-      decoration: BoxDecoration(
-        border: Border.all(color: colorScheme.outlineVariant),
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(14, 10, 14, 6),
-            child: Row(
-              children: [
-                Text('Samples', style: theme.textTheme.titleSmall),
-                const Spacer(),
-                Text(
-                  '${widget.regions.length} files',
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: colorScheme.onSurfaceVariant,
-                    fontWeight: FontWeight.w600,
-                  ),
+    return Focus(
+      focusNode: _focusNode,
+      onKeyEvent: _handleKeyEvent,
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onTap: _focusNode.requestFocus,
+        child: Container(
+          decoration: BoxDecoration(
+            border: Border.all(color: colorScheme.outlineVariant),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 10, 14, 6),
+                child: Row(
+                  children: [
+                    Text('Samples', style: theme.textTheme.titleSmall),
+                    const Spacer(),
+                    Text(
+                      '${widget.regions.length} files',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
+              ),
+              Divider(height: 1, color: colorScheme.outlineVariant),
+              Expanded(
+                child: ListView.separated(
+                  controller: _scrollController,
+                  itemCount: widget.regions.length,
+                  separatorBuilder: (_, _) =>
+                      Divider(height: 1, color: colorScheme.outlineVariant),
+                  itemBuilder: (context, index) {
+                    final region = widget.regions[index];
+                    return SizedBox(
+                      height: _sampleListRowHeight,
+                      child: _SampleListRow(
+                        region: region,
+                        regions: widget.regions,
+                        selected: region.path == widget.selected?.path,
+                        onTap: () {
+                          _focusNode.requestFocus();
+                          widget.onSelectRegion(region);
+                        },
+                        onChangeRegion: widget.onChangeRegion,
+                        onChangeRoot: widget.onChangeRoot,
+                        onChangeVelocity: widget.onChangeVelocity,
+                        onChangeLow: widget.onChangeLow,
+                        onChangeHigh: widget.onChangeHigh,
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
           ),
-          Divider(height: 1, color: colorScheme.outlineVariant),
-          Expanded(
-            child: ListView.separated(
-              controller: _scrollController,
-              itemCount: widget.regions.length,
-              separatorBuilder: (_, _) =>
-                  Divider(height: 1, color: colorScheme.outlineVariant),
-              itemBuilder: (context, index) {
-                final region = widget.regions[index];
-                return SizedBox(
-                  height: _sampleListRowHeight,
-                  child: _SampleListRow(
-                    region: region,
-                    regions: widget.regions,
-                    selected: region.path == widget.selected?.path,
-                    onTap: () => widget.onSelectRegion(region),
-                    onChangeRegion: widget.onChangeRegion,
-                    onChangeRoot: widget.onChangeRoot,
-                    onChangeVelocity: widget.onChangeVelocity,
-                    onChangeLow: widget.onChangeLow,
-                    onChangeHigh: widget.onChangeHigh,
-                  ),
-                );
-              },
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -2637,11 +2817,6 @@ class _SampleInspector extends StatelessWidget {
     required this.wavEditDraft,
     required this.waveformMode,
     required this.renderingWav,
-    required this.onChangeRegion,
-    required this.onChangeRoot,
-    required this.onChangeVelocity,
-    required this.onChangeLow,
-    required this.onChangeHigh,
     required this.onChangeLoop,
     required this.onChangeLoopEnabled,
     required this.onChangeWavEdit,
@@ -2671,11 +2846,6 @@ class _SampleInspector extends StatelessWidget {
   final _WavEditDraft? wavEditDraft;
   final _WaveformMode waveformMode;
   final bool renderingWav;
-  final ValueChanged<PolySampleRegion> onChangeRegion;
-  final void Function(PolySampleRegion region, int value) onChangeRoot;
-  final void Function(PolySampleRegion region, int value) onChangeVelocity;
-  final void Function(PolySampleRegion region, int value) onChangeLow;
-  final void Function(PolySampleRegion region, int value) onChangeHigh;
   final void Function(PolySampleRegion region, _LoopMarkerDraft markers)
   onChangeLoop;
   final void Function(PolySampleRegion region, bool enabled)
@@ -2700,7 +2870,6 @@ class _SampleInspector extends StatelessWidget {
     if (r == null) {
       return const Center(child: Text('No sample selected'));
     }
-    final range = _rangeBoundsForRegion(r, regions);
     final sampleIndex = regions.indexWhere((region) => region.path == r.path);
     final previous = sampleIndex > 0 ? regions[sampleIndex - 1] : null;
     final next = sampleIndex >= 0 && sampleIndex < regions.length - 1
@@ -2752,46 +2921,7 @@ class _SampleInspector extends StatelessWidget {
             icon: const Icon(Icons.folder_open, size: 18),
             label: const Text('Load folder'),
           ),
-          const SizedBox(height: 16),
-          _NoteStepper(
-            label: 'Root',
-            value: r.rootMidi,
-            onChanged: (value) => onChangeRoot(r, value),
-          ),
-          if (range != null) ...[
-            _NoteStepper(
-              label: 'Low',
-              value: range.start,
-              min: _lowMinFor(r, regions),
-              max: _lowMaxFor(r, regions),
-              onChanged: (value) => onChangeLow(r, value),
-            ),
-            _NoteStepper(
-              label: 'High',
-              value: range.end,
-              min: _highMinFor(r),
-              max: _highMaxFor(r, regions),
-              onChanged: _nextRegionInLane(r, regions) == null
-                  ? null
-                  : (value) => onChangeHigh(r, value),
-            ),
-            const SizedBox(height: 8),
-          ],
-          _NumberStepper(
-            label: 'Velocity',
-            value: r.velocityLayer ?? 1,
-            min: 1,
-            max: 16,
-            onChanged: (value) => onChangeVelocity(r, value),
-          ),
-          _NumberStepper(
-            label: 'Round robin',
-            value: r.roundRobin ?? 1,
-            min: 1,
-            max: 32,
-            onChanged: (value) => onChangeRegion(r.copyWith(roundRobin: value)),
-          ),
-          const SizedBox(height: 24),
+          const SizedBox(height: 18),
           _WaveformSection(
             waveform: waveform,
             cachedWaveform: cachedWaveform,
@@ -2827,66 +2957,6 @@ class _SampleInspector extends StatelessWidget {
           ),
         ],
       ),
-    );
-  }
-}
-
-class _NoteStepper extends StatelessWidget {
-  const _NoteStepper({
-    required this.label,
-    required this.value,
-    required this.onChanged,
-    this.min = 0,
-    this.max = 127,
-  });
-
-  final String label;
-  final int? value;
-  final ValueChanged<int>? onChanged;
-  final int min;
-  final int max;
-
-  @override
-  Widget build(BuildContext context) {
-    final current = value ?? 60;
-    return _InspectorStepperShell(
-      label: label,
-      value: value == null
-          ? '-'
-          : PolyMultisampleParser.midiToNoteName(current),
-      onDecrement: onChanged == null || current <= min
-          ? null
-          : () => onChanged!(current - 1),
-      onIncrement: onChanged == null || current >= max
-          ? null
-          : () => onChanged!(current + 1),
-    );
-  }
-}
-
-class _NumberStepper extends StatelessWidget {
-  const _NumberStepper({
-    required this.label,
-    required this.value,
-    required this.min,
-    required this.max,
-    required this.onChanged,
-  });
-
-  final String label;
-  final int? value;
-  final int min;
-  final int max;
-  final ValueChanged<int> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final current = value ?? min;
-    return _InspectorStepperShell(
-      label: label,
-      value: value?.toString() ?? min.toString(),
-      onDecrement: current <= min ? null : () => onChanged(current - 1),
-      onIncrement: current >= max ? null : () => onChanged(current + 1),
     );
   }
 }
@@ -4256,81 +4326,6 @@ class _WaveformPainter extends CustomPainter {
         oldDelegate.destructivePreview != destructivePreview ||
         oldDelegate.startLabel != startLabel ||
         oldDelegate.endLabel != endLabel;
-  }
-}
-
-class _InspectorStepperShell extends StatelessWidget {
-  const _InspectorStepperShell({
-    required this.label,
-    required this.value,
-    required this.onDecrement,
-    required this.onIncrement,
-  });
-
-  final String label;
-  final String value;
-  final VoidCallback? onDecrement;
-  final VoidCallback? onIncrement;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 5),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 88,
-            child: Text(label, style: theme.textTheme.bodySmall),
-          ),
-          Expanded(
-            child: Container(
-              height: 34,
-              decoration: BoxDecoration(
-                border: Border.all(color: colorScheme.outlineVariant),
-                borderRadius: BorderRadius.circular(4),
-              ),
-              child: Row(
-                children: [
-                  IconButton(
-                    tooltip: 'Decrease $label',
-                    onPressed: onDecrement,
-                    icon: const Icon(Icons.remove),
-                    iconSize: 16,
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints.tightFor(
-                      width: 34,
-                      height: 34,
-                    ),
-                  ),
-                  Expanded(
-                    child: Text(
-                      value,
-                      textAlign: TextAlign.center,
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                  IconButton(
-                    tooltip: 'Increase $label',
-                    onPressed: onIncrement,
-                    icon: const Icon(Icons.add),
-                    iconSize: 16,
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints.tightFor(
-                      width: 34,
-                      height: 34,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
   }
 }
 

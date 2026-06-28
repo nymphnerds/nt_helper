@@ -10,6 +10,15 @@ This fork/branch contains an experimental Windows test build for a new Poly Mult
 
 ### 2026-06-28 Update
 
+- Added a first Decent Sampler import path from the `Samples` workspace.
+- Accepts `.dspreset`, `.dslibrary`, and `.zip` sources.
+- Reads `.dslibrary`/`.zip` directly without requiring manual unpacking.
+- Exports Disting NT-ready WAV folders using filename tags for root note, switch/low note, velocity layer, and round robin.
+- Copies Decent `loopStart`/`loopEnd` into WAV `smpl` metadata where possible.
+- Writes `_CONVERSION_REPORT.md` into each converted output folder.
+- Keeps the converter WAV-only for now, matching the Disting NT manual. Non-WAV source audio is reported instead of silently converted.
+- Uses a tolerant Decent parser: it only needs sample paths, root notes, velocity ranges, round-robin positions, and loop points, and ignores unrelated/messy XML where possible.
+- Smoke-tested successfully with a real Decent Sampler library in the Windows test build.
 - Fixed unreliable toggling between `Samples` and `Routing`.
 - Changed the bottom `Parameters / Routing / Samples` switcher to single-select so clicking `Routing` always leaves the sample page.
 - Kept the optional sample-side parameter panel on its own toolbar button instead of mixing it into the page switcher.
@@ -85,7 +94,7 @@ Until then, waveform, playback, loop editing, and destructive WAV editing are lo
 
 - Complex velocity/round-robin libraries need more real-world testing.
 - Drag/drop import and drag-to-key assignment are not implemented yet.
-- Decent Sampler conversion/export is not implemented yet.
+- Decent Sampler import is an MVP and currently copies WAV sources only. AIFF/FLAC/OGG conversion is not implemented yet.
 - Direct Disting NT SD waveform/audio editing needs better file access from the device.
 
 ---
