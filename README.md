@@ -14,7 +14,7 @@ This fork/branch contains an experimental Windows test build for a new Poly Mult
 - Accepts `.dspreset`, `.dslibrary`, and `.zip` sources.
 - Reads `.dslibrary`/`.zip` directly without requiring manual unpacking.
 - Also accepts already extracted Decent Sampler folders.
-- Remembers the last selected local sample folder, Decent source folder/file location, and Decent output folder for the next picker session.
+- Remembers picker locations separately: local sample folder, Decent import source, Decent import output, and WAV export/save-as folder.
 - Exports Disting NT-ready WAV folders using filename tags for root note, switch/low note, velocity layer, and round robin.
 - Copies Decent `loopStart`/`loopEnd` into WAV `smpl` metadata where possible.
 - Writes `_CONVERSION_REPORT.md` into each converted output folder.

@@ -34,7 +34,9 @@ class _PolyMultisampleBuilderScreenState
       'poly_multisample.last_local_sample_folder';
   static const _lastDecentSourceFolderKey =
       'poly_multisample.last_decent_source_folder';
-  static const _lastDecentOutputFolderKey =
+  static const _lastImportOutputFolderKey =
+      'poly_multisample.last_import_output_folder';
+  static const _legacyLastDecentOutputFolderKey =
       'poly_multisample.last_decent_output_folder';
 
   PolySampleInstrument? _instrument;
@@ -43,7 +45,7 @@ class _PolyMultisampleBuilderScreenState
   String? _error;
   String? _lastLocalSampleFolder;
   String? _lastDecentSourceFolder;
-  String? _lastDecentOutputFolder;
+  String? _lastImportOutputFolder;
 
   @override
   void initState() {
@@ -57,7 +59,9 @@ class _PolyMultisampleBuilderScreenState
     setState(() {
       _lastLocalSampleFolder = prefs.getString(_lastLocalSampleFolderKey);
       _lastDecentSourceFolder = prefs.getString(_lastDecentSourceFolderKey);
-      _lastDecentOutputFolder = prefs.getString(_lastDecentOutputFolderKey);
+      _lastImportOutputFolder =
+          prefs.getString(_lastImportOutputFolderKey) ??
+          prefs.getString(_legacyLastDecentOutputFolderKey);
     });
   }
 
@@ -202,13 +206,13 @@ class _PolyMultisampleBuilderScreenState
     final outputPath = await FilePicker.getDirectoryPath(
       dialogTitle: 'Choose folder for Disting NT output',
       initialDirectory:
-          _existingDirectory(_lastDecentOutputFolder) ??
+          _existingDirectory(_lastImportOutputFolder) ??
           _existingDirectory(_lastLocalSampleFolder) ??
           _existingDirectory(_lastDecentSourceFolder),
     );
     if (outputPath == null) return;
-    setState(() => _lastDecentOutputFolder = outputPath);
-    unawaited(_savePickerPreference(_lastDecentOutputFolderKey, outputPath));
+    setState(() => _lastImportOutputFolder = outputPath);
+    unawaited(_savePickerPreference(_lastImportOutputFolderKey, outputPath));
 
     setState(() {
       _loading = true;
@@ -953,6 +957,9 @@ class _InstrumentEditor extends StatefulWidget {
 }
 
 class _InstrumentEditorState extends State<_InstrumentEditor> {
+  static const _lastWavExportFolderKey =
+      'poly_multisample.last_wav_export_folder';
+
   late List<PolySampleRegion> _regions;
   late List<PolySampleRegion> _baselineRegions;
   late List<_SampleLane> _mapLanes;
@@ -980,11 +987,13 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
   bool _autoPreviewOnSelect = false;
   double _previewGainDb = 0;
   _WaveformMode _waveformMode = _WaveformMode.metadata;
+  String? _lastWavExportFolder;
 
   @override
   void initState() {
     super.initState();
     _resetDraft();
+    unawaited(_loadWavExportPreference());
     _playerStateSubscription = _samplePlayer.onPlayerStateChanged.listen((
       state,
     ) {
@@ -1024,6 +1033,26 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
     _clearLoopPreviewFile();
     _samplePlayer.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadWavExportPreference() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() {
+      _lastWavExportFolder = prefs.getString(_lastWavExportFolderKey);
+    });
+  }
+
+  String? _existingDirectory(String? path) {
+    if (path == null || path.isEmpty) return null;
+    return Directory(path).existsSync() ? path : null;
+  }
+
+  Future<void> _saveWavExportFolder(String path) async {
+    final folder = Directory(path).existsSync() ? path : p.dirname(path);
+    setState(() => _lastWavExportFolder = folder);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_lastWavExportFolderKey, folder);
   }
 
   void _resetDraft() {
@@ -1246,6 +1275,9 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
       targetPath = await FilePicker.saveFile(
         dialogTitle: 'Save edited WAV as',
         fileName: p.basename(region.path),
+        initialDirectory:
+            _existingDirectory(_lastWavExportFolder) ??
+            _existingDirectory(p.dirname(region.path)),
         type: FileType.custom,
         allowedExtensions: const ['wav'],
       );
@@ -1256,6 +1288,9 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
     }
     final target = targetPath;
     if (target == null) return;
+    if (saveAs) {
+      unawaited(_saveWavExportFolder(target));
+    }
 
     setState(() => _renderingWav = true);
     try {
