@@ -3,10 +3,21 @@
 ## Poly Multisample Builder Test Release Changelog
 
 Branch: `nymph-next-fix`
-Tag: `poly-multisample-builder-test-v1`
-Windows zip: `nt_helper-windows-poly-multisample-builder-test-v1.zip`
+Tag: `poly-multisample-builder-test-v2`
+Windows zip: `nt_helper-windows-poly-multisample-builder-test-v2.zip`
 
 This fork/branch contains an experimental Windows test build for a new Poly Multisample Builder in NT Helper.
+
+### 2026-06-28 Import Report Polish
+
+- Pulled in upstream `main` so this branch includes the current chat/PDF attachment fixes.
+- Keeps the expanded chat text/PDF limits and local-file workspace behavior from this fork.
+- Extends the keyboard map down to the Disting/MIDI lower range instead of starting at C1.
+- Makes the Decent import strategy dialog easier to read:
+  - shows a compact summary first: group count, sample count, labelled layers, round robins, velocity ranges, and controller bindings;
+  - keeps the long per-group data inside a collapsed detailed report;
+  - labels detailed rows as `Group N` plus the XML-derived name/tag when available;
+  - avoids pretending every Decent group is just a velocity layer when the XML suggests articulations, mic layers, switches, or controller-driven options.
 
 ### 2026-06-28 Update
 

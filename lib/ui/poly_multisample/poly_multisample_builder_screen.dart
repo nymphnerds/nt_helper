@@ -695,33 +695,38 @@ class _DecentImportOptionsDialogState
                 'Each preset imports as its own Disting NT folder; these choices control how groups inside each preset are mapped.',
                 style: theme.textTheme.bodyLarge,
               ),
-              if (widget.analysis.structureSummary.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                Text(
-                  widget.analysis.structureSummary,
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    color: theme.colorScheme.primary,
-                    fontWeight: FontWeight.w700,
-                  ),
+              const SizedBox(height: 14),
+              _DecentImportSummaryPanel(analysis: widget.analysis),
+              const SizedBox(height: 12),
+              ExpansionTile(
+                tilePadding: EdgeInsets.zero,
+                childrenPadding: EdgeInsets.zero,
+                title: Text(
+                  'Detailed group report',
+                  style: theme.textTheme.titleSmall,
                 ),
-              ],
-              const SizedBox(height: 18),
-              Text('Compact report', style: theme.textTheme.titleSmall),
-              const SizedBox(height: 8),
-              DecoratedBox(
-                decoration: BoxDecoration(
-                  border: Border.all(color: theme.colorScheme.outlineVariant),
-                  borderRadius: BorderRadius.circular(4),
+                subtitle: Text(
+                  '${groups.length} Decent group(s), shown for checking the import decision.',
                 ),
-                child: Column(
-                  children: [
-                    for (var index = 0; index < groups.length; index++)
-                      _GroupReportRow(
-                        group: groups[index],
-                        showDivider: index < groups.length - 1,
+                children: [
+                  DecoratedBox(
+                    decoration: BoxDecoration(
+                      border: Border.all(
+                        color: theme.colorScheme.outlineVariant,
                       ),
-                  ],
-                ),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Column(
+                      children: [
+                        for (var index = 0; index < groups.length; index++)
+                          _GroupReportRow(
+                            group: groups[index],
+                            showDivider: index < groups.length - 1,
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
               const SizedBox(height: 18),
               Text('Import choices', style: theme.textTheme.titleSmall),
@@ -799,6 +804,208 @@ class _DecentImportOptionsDialogState
   }
 }
 
+class _DecentImportSummaryPanel extends StatelessWidget {
+  const _DecentImportSummaryPanel({required this.analysis});
+
+  final DecentSamplerImportAnalysis analysis;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final facts = _DecentImportFacts.from(analysis);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.22),
+        border: Border.all(color: colorScheme.outlineVariant),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('What this looks like', style: theme.textTheme.titleSmall),
+            const SizedBox(height: 8),
+            _SummaryBullet('${facts.groupCount} groups'),
+            _SummaryBullet('${facts.sampleCount} samples'),
+            _SummaryBullet(
+              '${facts.labelledGroupCount} labelled group/layer names',
+            ),
+            _SummaryBullet('${facts.roundRobinCount} round robins'),
+            _SummaryBullet(
+              '${facts.velocityRangeCount} explicit velocity ranges',
+            ),
+            if (facts.controllerSummary.isNotEmpty)
+              _SummaryBullet(facts.controllerSummary),
+            const SizedBox(height: 10),
+            Text(
+              facts.interpretation,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              facts.recommendation,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: colorScheme.primary,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SummaryBullet extends StatelessWidget {
+  const _SummaryBullet(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 5),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 7),
+            child: Icon(
+              Icons.circle,
+              size: 5,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(child: Text(text, style: theme.textTheme.bodyMedium)),
+        ],
+      ),
+    );
+  }
+}
+
+class _DecentImportFacts {
+  const _DecentImportFacts({
+    required this.groupCount,
+    required this.sampleCount,
+    required this.labelledGroupCount,
+    required this.roundRobinCount,
+    required this.velocityRangeCount,
+    required this.controllerSummary,
+    required this.interpretation,
+    required this.recommendation,
+  });
+
+  final int groupCount;
+  final int sampleCount;
+  final int labelledGroupCount;
+  final int roundRobinCount;
+  final int velocityRangeCount;
+  final String controllerSummary;
+  final String interpretation;
+  final String recommendation;
+
+  factory _DecentImportFacts.from(DecentSamplerImportAnalysis analysis) {
+    final groups = analysis.groups;
+    final rrValues = <int>{};
+    final velocityRanges = <String>{};
+    for (final group in groups) {
+      final rrMatch = RegExp(
+        r'RR\s+(\d+)(?:-(\d+))?',
+      ).firstMatch(group.roundRobinSummary);
+      if (rrMatch != null) {
+        final start = int.tryParse(rrMatch.group(1) ?? '');
+        final end = int.tryParse(rrMatch.group(2) ?? '') ?? start;
+        if (start != null && end != null) {
+          for (var value = start; value <= end; value++) {
+            rrValues.add(value);
+          }
+        }
+      }
+      for (final match in RegExp(
+        r'\b\d+-\d+\b',
+      ).allMatches(group.velocitySummary)) {
+        velocityRanges.add(match.group(0)!);
+      }
+    }
+
+    final summary = analysis.structureSummary.toUpperCase();
+    final controllerLabels = <String>[
+      if (summary.contains('PAN')) 'pan',
+      if (summary.contains('GROUP_TUNING')) 'tuning',
+      if (summary.contains('ENABLED')) 'enabled/switching',
+      if (summary.contains('AMP_VOLUME') || summary.contains('VOLUME'))
+        'volume',
+    ];
+    final hasControllerBindings =
+        summary.contains('CONTROL') || summary.contains('BIND');
+    final controllerSummary = hasControllerBindings
+        ? controllerLabels.isEmpty
+              ? 'UI/controller bindings present'
+              : 'lots of UI/controller bindings, especially ${controllerLabels.join('/')}'
+        : '';
+
+    final recommendation = switch (analysis.recommendedGroupHandling) {
+      DecentSamplerGroupHandling.splitFolders =>
+        'Recommended: split groups into separate folders.',
+      DecentSamplerGroupHandling.velocityLayers =>
+        'Recommended: use groups as velocity layers.',
+      DecentSamplerGroupHandling.selectedGroup =>
+        'Recommended: convert one group only.',
+      DecentSamplerGroupHandling.auto =>
+        'Recommended: keep the default parser mapping.',
+    };
+
+    final interpretation = hasControllerBindings
+        ? 'This looks like a library with articulations/options or controller-mixed layers. A single Disting NT Poly Multisample folder cannot reproduce Decent Sampler UI controls directly.'
+        : velocityRanges.length > 1
+        ? 'This looks like a velocity-layered instrument. Velocity-layer import is likely useful.'
+        : rrValues.length > 1
+        ? 'This looks like a round-robin sample set. Round robins can be preserved.'
+        : 'This looks like a simple sample set.';
+
+    return _DecentImportFacts(
+      groupCount: groups.length,
+      sampleCount: groups.fold<int>(
+        0,
+        (total, group) => total + group.sampleCount,
+      ),
+      labelledGroupCount: groups
+          .where((group) => !_isGenericDecentGroupName(group.name))
+          .map((group) => group.name)
+          .toSet()
+          .length,
+      roundRobinCount: rrValues.length,
+      velocityRangeCount: velocityRanges.length,
+      controllerSummary: controllerSummary,
+      interpretation: interpretation,
+      recommendation: recommendation,
+    );
+  }
+
+  static bool _isGenericDecentGroupName(String name) {
+    return RegExp(r'^Group \d+$').hasMatch(name.trim());
+  }
+}
+
+String _decentGroupNumberLabel(DecentSamplerGroupInfo group) {
+  final separator = group.key.indexOf(':');
+  if (separator <= 0) return 'Group';
+  final index = int.tryParse(group.key.substring(0, separator));
+  return index == null ? 'Group' : 'Group ${index + 1}';
+}
+
+String? _decentXmlGroupName(DecentSamplerGroupInfo group) {
+  final name = group.name.trim();
+  if (name.isEmpty || RegExp(r'^Group \d+$').hasMatch(name)) return null;
+  return name;
+}
+
 class _SelectedGroupRow extends StatelessWidget {
   const _SelectedGroupRow({
     required this.group,
@@ -813,6 +1020,8 @@ class _SelectedGroupRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final groupNumber = _decentGroupNumberLabel(group);
+    final xmlName = _decentXmlGroupName(group);
     return ListTile(
       dense: true,
       contentPadding: EdgeInsets.zero,
@@ -820,7 +1029,7 @@ class _SelectedGroupRow extends StatelessWidget {
         selected ? Icons.check_circle : Icons.circle_outlined,
         color: selected ? colorScheme.primary : colorScheme.outline,
       ),
-      title: Text(group.name),
+      title: Text(xmlName == null ? groupNumber : '$groupNumber - $xmlName'),
       subtitle: Text(
         '${group.sampleCount} samples, ${group.noteRange}, ${group.roundRobinSummary}',
       ),
@@ -840,6 +1049,8 @@ class _GroupReportRow extends StatelessWidget {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final examples = group.examples.take(2).join(', ');
+    final groupNumber = _decentGroupNumberLabel(group);
+    final xmlName = _decentXmlGroupName(group);
     return Column(
       children: [
         Padding(
@@ -848,14 +1059,36 @@ class _GroupReportRow extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               SizedBox(
-                width: 150,
-                child: Text(
-                  group.name,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
+                width: 170,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      groupNumber,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    if (xmlName != null)
+                      Text(
+                        xmlName,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: colorScheme.primary,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      )
+                    else
+                      Text(
+                        'No XML name',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                  ],
                 ),
               ),
               const SizedBox(width: 12),
@@ -2827,18 +3060,15 @@ List<int> _midiExtentsForRegions(List<PolySampleRegion> regions) {
 }
 
 int _initialMapMinMidi(List<PolySampleRegion> regions) {
-  final extents = _midiExtentsForRegions(regions);
-  if (extents.isEmpty) return 24;
-  extents.sort();
-  return (((extents.first / 12).floor() * 12) - 12).clamp(0, 120).toInt();
+  return 0;
 }
 
 int _initialMapMaxMidi(List<PolySampleRegion> regions, int minMidi) {
   final extents = _midiExtentsForRegions(regions);
-  if (extents.isEmpty) return 96;
+  if (extents.isEmpty) return 128;
   extents.sort();
   return (((extents.last / 12).ceil() * 12) + 12)
-      .clamp(minMidi + 12, 127)
+      .clamp(minMidi + 12, 128)
       .toInt();
 }
 
@@ -4933,7 +5163,7 @@ class _KeyboardMapPainter extends CustomPainter {
       );
     }
 
-    for (var midi = minMidi; midi <= maxMidi; midi += 12) {
+    for (var midi = minMidi; midi < maxMidi; midi += 12) {
       final x = left + ((midi - minMidi) / (maxMidi - minMidi)) * width;
       canvas.drawLine(Offset(x, zoneTop), Offset(x, keyboardBottom), gridPaint);
     }
@@ -5054,7 +5284,7 @@ class _KeyboardMapPainter extends CustomPainter {
       );
     }
 
-    for (var midi = minMidi; midi <= maxMidi; midi += 12) {
+    for (var midi = minMidi; midi < maxMidi; midi += 12) {
       final x = left + ((midi - minMidi) / (maxMidi - minMidi)) * width;
       final textPainter = TextPainter(
         text: TextSpan(
