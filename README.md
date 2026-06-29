@@ -3,15 +3,26 @@
 ## Poly Multisample Builder Test Release Changelog
 
 Branch: `nymph-next-fix`
-Tag: `poly-multisample-builder-test-v2`
-Windows zip: `nt_helper-windows-poly-multisample-builder-test-v2.zip`
+Tag: `poly-multisample-builder-test-v3`
+Windows zip: `nt_helper-windows-poly-multisample-builder-test-v3.zip`
 
 This fork/branch contains an experimental Windows test build for a new Poly Multisample Builder in NT Helper.
 
+### 2026-06-29 Custom Mode Cleanup
+
+- Adds a Custom multisample draft workflow for building mashup folders from loose WAVs, source folders, and selected Decent Sampler groups/files.
+- Custom mode copies sources on save; it does not modify the original library files.
+- Decent sources can be added from `.dslibrary`, `.zip`, `.dspreset`, or extracted folders.
+- Decent group selection now works at group level and individual WAV level, so whole layers/articulations/round-robin groups can be staged without extracting the entire archive first.
+- Custom draft rows support multi-select removal, including shift-range and ctrl/cmd-toggle selection.
+- Remembers picker locations separately for local sample folders, Decent import source, Decent import output, custom source, custom output, and WAV save-as/export.
+- Keeps direct NT SD waveform/audio download disabled; local or mounted folders remain the supported path for waveform preview, audio preview, loop metadata edits, and destructive WAV edits.
+- Keeps chat/PDF attachment handling aligned with upstream `main`; this branch does not carry a separate fork-specific chat file-limit implementation.
+
 ### 2026-06-28 Import Report Polish
 
-- Pulled in upstream `main` so this branch includes the current chat/PDF attachment fixes.
-- Keeps the expanded chat text/PDF limits and local-file workspace behavior from this fork.
+- Pulled in upstream `main` so this branch uses Thorinside's current chat/PDF attachment and local-file workspace behavior.
+- Leaves the upstream chat file limits unchanged: PDFs up to 20 MB, general reads up to 5 MB, search file scans up to 20 MB, and extracted PDF context capped at 120,000 characters.
 - Extends the keyboard map down to the Disting/MIDI lower range instead of starting at C1.
 - Makes the Decent import strategy dialog easier to read:
   - shows a compact summary first: group count, sample count, labelled layers, round robins, velocity ranges, and controller bindings;
@@ -26,6 +37,7 @@ This fork/branch contains an experimental Windows test build for a new Poly Mult
 - Reads `.dslibrary`/`.zip` directly without requiring manual unpacking.
 - Also accepts already extracted Decent Sampler folders.
 - Remembers picker locations separately: local sample folder, Decent import source, Decent import output, and WAV export/save-as folder.
+- Can optionally copy likely source license/readme/manual/info/artwork files into `_source_docs` alongside each converted output folder.
 - Exports Disting NT-ready WAV folders using filename tags for root note, switch/low note, velocity layer, and round robin.
 - Copies Decent `loopStart`/`loopEnd` into WAV `smpl` metadata where possible.
 - Writes `_CONVERSION_REPORT.md` into each converted output folder.
@@ -118,7 +130,7 @@ Until then, waveform, playback, loop editing, and destructive WAV editing are lo
 
 - Complex velocity/round-robin libraries need more real-world testing.
 - Drag/drop import and drag-to-key assignment are not implemented yet.
-- Decent Sampler import is an MVP and currently copies WAV sources only. AIFF/FLAC/OGG conversion is not implemented yet.
+- Decent Sampler import is an MVP and currently converts WAV sources only. AIFF/FLAC/OGG conversion is not implemented yet.
 - Direct Disting NT SD waveform/audio editing needs better file access from the device.
 
 ---

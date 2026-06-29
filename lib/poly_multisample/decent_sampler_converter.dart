@@ -14,21 +14,26 @@ class DecentSamplerConversionResult {
   const DecentSamplerConversionResult({
     required this.outputFolders,
     required this.copiedFiles,
+    required this.copiedDocumentationFiles,
     required this.decisions,
     required this.warnings,
   });
 
   final List<String> outputFolders;
   final int copiedFiles;
+  final int copiedDocumentationFiles;
   final List<String> decisions;
   final List<String> warnings;
 
   String get summary {
     final folderCount = outputFolders.length;
+    final docText = copiedDocumentationFiles > 0
+        ? ' Copied $copiedDocumentationFiles source doc/license file(s).'
+        : '';
     final warningText = warnings.isEmpty
         ? 'No warnings.'
         : '${warnings.length} warning(s).';
-    return 'Converted $copiedFiles WAV file(s) into $folderCount folder(s). $warningText';
+    return 'Converted $copiedFiles WAV file(s) into $folderCount folder(s).$docText $warningText';
   }
 }
 
@@ -43,10 +48,12 @@ class DecentSamplerConvertOptions {
   const DecentSamplerConvertOptions({
     this.groupHandling = DecentSamplerGroupHandling.auto,
     this.selectedGroupKey,
+    this.includeSourceDocs = true,
   });
 
   final DecentSamplerGroupHandling groupHandling;
   final String? selectedGroupKey;
+  final bool includeSourceDocs;
 }
 
 class DecentSamplerGroupInfo {
@@ -154,6 +161,7 @@ class DecentSamplerConverter {
 
     final outputFolders = <String>[];
     var copiedFiles = 0;
+    var copiedDocumentationFiles = 0;
     for (final plan in plans) {
       final outputFolder = await _createOutputFolder(
         outputParentPath,
@@ -161,12 +169,18 @@ class DecentSamplerConverter {
       );
       outputFolders.add(outputFolder.path);
       copiedFiles += await _writePlan(plan, outputFolder, warnings);
+      copiedDocumentationFiles += await _copySourceDocs(
+        plan,
+        outputFolder,
+        warnings,
+      );
       await _writeReport(plan, outputFolder, decisions, warnings);
     }
 
     return DecentSamplerConversionResult(
       outputFolders: outputFolders,
       copiedFiles: copiedFiles,
+      copiedDocumentationFiles: copiedDocumentationFiles,
       decisions: decisions,
       warnings: warnings,
     );
@@ -314,6 +328,12 @@ class DecentSamplerConverter {
 
     final plans = <_DecentPresetPlan>[];
     for (final file in presetFiles) {
+      final resolver = _LocalDecentSourceResolver(
+        baseDirectory: file.parent.path,
+      );
+      final sourceDocs = options.includeSourceDocs
+          ? await _sourceDocsForLocalDirectory(file.parent)
+          : const <_DecentSourceDoc>[];
       final presetName = p.basenameWithoutExtension(file.path);
       final presets = _parsePresetXml(
         _fixInvalidXml(_decodeXmlText(await file.readAsBytes())),
@@ -324,11 +344,8 @@ class DecentSamplerConverter {
       );
       plans.addAll(
         presets.map(
-          (preset) => preset.copyWith(
-            sourceResolver: _LocalDecentSourceResolver(
-              baseDirectory: file.parent.path,
-            ),
-          ),
+          (preset) =>
+              preset.copyWith(sourceResolver: resolver, sourceDocs: sourceDocs),
         ),
       );
     }
@@ -351,10 +368,14 @@ class DecentSamplerConverter {
       options: options,
     );
     final baseDir = file.parent.path;
+    final sourceDocs = options.includeSourceDocs
+        ? await _sourceDocsForLocalDirectory(file.parent)
+        : const <_DecentSourceDoc>[];
     return [
       for (final preset in presets)
         preset.copyWith(
           sourceResolver: _LocalDecentSourceResolver(baseDirectory: baseDir),
+          sourceDocs: sourceDocs,
         ),
     ];
   }
@@ -386,12 +407,16 @@ class DecentSamplerConverter {
     final archiveFiles = {
       for (final entry in files) _normalizeZipPath(entry.name): entry,
     };
+    final archiveDocs = options.includeSourceDocs
+        ? _sourceDocsForArchive(files)
+        : const <_DecentSourceDoc>[];
     final plans = <_DecentPresetPlan>[];
     for (final entry in presetFiles) {
       final content = _fixInvalidXml(
         _decodeXmlText(entry.content as List<int>),
       );
       final presetName = p.posix.basenameWithoutExtension(entry.name);
+      final presetDirectory = p.posix.dirname(_normalizeZipPath(entry.name));
       final presets = _parsePresetXml(
         content,
         presetName: presetName.isEmpty ? fallbackName : presetName,
@@ -404,7 +429,11 @@ class DecentSamplerConverter {
           (preset) => preset.copyWith(
             sourceResolver: _ArchiveDecentSourceResolver(
               files: archiveFiles,
-              presetDirectory: p.posix.dirname(_normalizeZipPath(entry.name)),
+              presetDirectory: presetDirectory,
+            ),
+            sourceDocs: _sourceDocsForArchivePreset(
+              archiveDocs,
+              presetDirectory,
             ),
           ),
         ),
@@ -464,6 +493,7 @@ class DecentSamplerConverter {
               const DecentSamplerConvertOptions(),
             ),
             sourceResolver: const _MissingDecentSourceResolver(),
+            sourceDocs: const [],
           ),
         );
       }
@@ -493,6 +523,7 @@ class DecentSamplerConverter {
           options,
         ),
         sourceResolver: const _MissingDecentSourceResolver(),
+        sourceDocs: const [],
       ),
     ];
   }
@@ -1106,6 +1137,30 @@ class DecentSamplerConverter {
     return copied;
   }
 
+  Future<int> _copySourceDocs(
+    _DecentPresetPlan plan,
+    Directory outputFolder,
+    List<String> warnings,
+  ) async {
+    if (plan.sourceDocs.isEmpty) return 0;
+
+    final docsFolder = Directory(p.join(outputFolder.path, '_source_docs'));
+    final usedNames = <String>{};
+    var copied = 0;
+    for (final doc in plan.sourceDocs) {
+      final bytes = await plan.sourceResolver.read(doc.sourcePath);
+      if (bytes == null) {
+        warnings.add('Missing source documentation: ${doc.sourcePath}');
+        continue;
+      }
+      await docsFolder.create(recursive: true);
+      final outputName = _uniqueDocOutputName(doc.displayPath, usedNames);
+      await File(p.join(docsFolder.path, outputName)).writeAsBytes(bytes);
+      copied++;
+    }
+    return copied;
+  }
+
   Future<void> _writeReport(
     _DecentPresetPlan plan,
     Directory outputFolder,
@@ -1118,6 +1173,7 @@ class DecentSamplerConverter {
       '- Preset: `${plan.presetName}`',
       '- Output folder: `${outputFolder.path}`',
       '- Regions planned: ${plan.regions.length}',
+      '- Source docs copied: ${plan.sourceDocs.length}',
       '',
       '## Conversion decisions',
       '',
@@ -1133,6 +1189,12 @@ class DecentSamplerConverter {
       for (final region in plan.regions)
         '| `${region.groupName}` | `${region.sourcePath}` | `${region.outputFileName}` | ${PolyMultisampleParser.midiToNoteName(region.rootMidi)} | ${region.switchPoint} | V${region.velocityLayer} | RR${region.roundRobin} | ${region.loopStart != null && region.loopEnd != null ? '${region.loopStart}-${region.loopEnd}' : '-'} |',
       '',
+      if (plan.sourceDocs.isNotEmpty) ...[
+        '## Source documentation',
+        '',
+        for (final doc in plan.sourceDocs) '- `${doc.displayPath}`',
+        '',
+      ],
       '## Warnings',
       '',
       if (warnings.isEmpty)
@@ -1306,6 +1368,207 @@ class DecentSamplerConverter {
           part == '__MACOSX' || part == '.DS_Store' || part.startsWith('._'),
     );
   }
+
+  Future<List<_DecentSourceDoc>> _sourceDocsForLocalDirectory(
+    Directory directory,
+  ) async {
+    final docs = <_DecentSourceDoc>[];
+    if (!await directory.exists()) return docs;
+    await for (final entity in directory.list(
+      recursive: true,
+      followLinks: false,
+    )) {
+      if (entity is! File) continue;
+      final relativePath = p.relative(entity.path, from: directory.path);
+      final normalized = _normalizeZipPath(relativePath);
+      if (!_isSourceDocPath(normalized)) continue;
+      docs.add(
+        _DecentSourceDoc(sourcePath: normalized, displayPath: normalized),
+      );
+    }
+    docs.sort((a, b) => a.displayPath.compareTo(b.displayPath));
+    return _dedupeSourceDocs(docs);
+  }
+
+  static List<_DecentSourceDoc> _sourceDocsForArchive(List<ArchiveFile> files) {
+    final docs = <_DecentSourceDoc>[];
+    for (final entry in files) {
+      final normalized = _normalizeZipPath(entry.name);
+      if (!_isSourceDocPath(normalized)) continue;
+      docs.add(
+        _DecentSourceDoc(sourcePath: normalized, displayPath: normalized),
+      );
+    }
+    docs.sort((a, b) => a.displayPath.compareTo(b.displayPath));
+    return _dedupeSourceDocs(docs);
+  }
+
+  static List<_DecentSourceDoc> _sourceDocsForArchivePreset(
+    List<_DecentSourceDoc> docs,
+    String presetDirectory,
+  ) {
+    final normalizedPresetDirectory = _normalizeZipPath(presetDirectory);
+    final presetPrefix =
+        normalizedPresetDirectory.isEmpty || normalizedPresetDirectory == '.'
+        ? ''
+        : '$normalizedPresetDirectory/';
+    final filtered = <_DecentSourceDoc>[];
+    for (final doc in docs) {
+      final path = _normalizeZipPath(doc.sourcePath);
+      final isTopLevel = !path.contains('/');
+      final isUnderPreset =
+          presetPrefix.isNotEmpty && path.startsWith(presetPrefix);
+      final isRootDocsFolder =
+          path.contains('/') &&
+          _sourceDocFolderHints.contains(path.split('/').first.toLowerCase());
+      if (isTopLevel || isUnderPreset || isRootDocsFolder) {
+        filtered.add(
+          presetPrefix.isNotEmpty && path.startsWith(presetPrefix)
+              ? _DecentSourceDoc(
+                  sourcePath: p.posix.relative(
+                    path,
+                    from: normalizedPresetDirectory,
+                  ),
+                  displayPath: path,
+                )
+              : _DecentSourceDoc(
+                  sourcePath: p.posix.relative(
+                    path,
+                    from: normalizedPresetDirectory,
+                  ),
+                  displayPath: path,
+                ),
+        );
+      }
+    }
+    return _dedupeSourceDocs(filtered);
+  }
+
+  static List<_DecentSourceDoc> _dedupeSourceDocs(List<_DecentSourceDoc> docs) {
+    final seen = <String>{};
+    return [
+      for (final doc in docs)
+        if (seen.add(doc.displayPath.toLowerCase())) doc,
+    ];
+  }
+
+  static bool _isSourceDocPath(String path) {
+    final normalized = _normalizeZipPath(path);
+    if (normalized.isEmpty || _isMacOsJunkPath(normalized)) return false;
+    final extension = p.posix.extension(normalized).toLowerCase();
+    if (!_sourceDocExtensions.contains(extension)) return false;
+    final parts = normalized
+        .split('/')
+        .map((part) => part.toLowerCase())
+        .toList();
+    final stem = p.posix.basenameWithoutExtension(normalized).toLowerCase();
+    final searchable = [...parts, stem].join(' ');
+    final hasDocName = _sourceDocNameHints.any(searchable.contains);
+    final hasDocFolder = parts.any(_sourceDocFolderHints.contains);
+    final isTopLevel = !normalized.contains('/');
+    if (_sourceGraphicExtensions.contains(extension)) {
+      return hasDocName || hasDocFolder;
+    }
+    if (_sourceTextDocExtensions.contains(extension) && isTopLevel) {
+      return true;
+    }
+    return hasDocName || hasDocFolder;
+  }
+
+  static String _uniqueDocOutputName(String sourcePath, Set<String> usedNames) {
+    final normalized = _normalizeZipPath(sourcePath);
+    final basename = p.posix
+        .basename(normalized)
+        .replaceAll(RegExp(r'[\\/:*?"<>|]+'), '_');
+    final safeName = basename.trim().isEmpty ? 'source_doc' : basename.trim();
+    final extension = p.extension(safeName);
+    final stem = p.basenameWithoutExtension(safeName);
+    var candidate = safeName;
+    var index = 2;
+    while (!usedNames.add(candidate.toLowerCase())) {
+      candidate = extension.isEmpty
+          ? '${stem}_$index'
+          : '${stem}_$index$extension';
+      index++;
+    }
+    return candidate;
+  }
+
+  static const _sourceDocExtensions = {
+    '.txt',
+    '.md',
+    '.markdown',
+    '.pdf',
+    '.rtf',
+    '.html',
+    '.htm',
+    '.url',
+    '.doc',
+    '.docx',
+    '.png',
+    '.jpg',
+    '.jpeg',
+    '.gif',
+    '.webp',
+  };
+
+  static const _sourceGraphicExtensions = {
+    '.png',
+    '.jpg',
+    '.jpeg',
+    '.gif',
+    '.webp',
+  };
+
+  static const _sourceTextDocExtensions = {
+    '.txt',
+    '.md',
+    '.markdown',
+    '.pdf',
+    '.rtf',
+    '.html',
+    '.htm',
+    '.url',
+    '.doc',
+    '.docx',
+  };
+
+  static const _sourceDocNameHints = {
+    'license',
+    'licence',
+    'readme',
+    'credits',
+    'credit',
+    'attribution',
+    'copyright',
+    'manual',
+    'guide',
+    'docs',
+    'documentation',
+    'info',
+    'about',
+    'terms',
+    'eula',
+    'cover',
+    'artwork',
+  };
+
+  static const _sourceDocFolderHints = {
+    'docs',
+    'doc',
+    'documentation',
+    'manual',
+    'manuals',
+    'license',
+    'licenses',
+    'licence',
+    'licences',
+    'readme',
+    'info',
+    'credits',
+    'artwork',
+    'cover',
+  };
 
   static String _groupKey(_DecentRawRegion region) {
     return _groupKeyFromParts(region.groupIndex, region.groupName);
@@ -1757,19 +2020,32 @@ class _DecentPresetPlan {
     required this.presetName,
     required this.regions,
     required this.sourceResolver,
+    required this.sourceDocs,
   });
 
   final String presetName;
   final List<_DecentMappedRegion> regions;
   final _DecentSourceResolver sourceResolver;
+  final List<_DecentSourceDoc> sourceDocs;
 
-  _DecentPresetPlan copyWith({_DecentSourceResolver? sourceResolver}) {
+  _DecentPresetPlan copyWith({
+    _DecentSourceResolver? sourceResolver,
+    List<_DecentSourceDoc>? sourceDocs,
+  }) {
     return _DecentPresetPlan(
       presetName: presetName,
       regions: regions,
       sourceResolver: sourceResolver ?? this.sourceResolver,
+      sourceDocs: sourceDocs ?? this.sourceDocs,
     );
   }
+}
+
+class _DecentSourceDoc {
+  const _DecentSourceDoc({required this.sourcePath, required this.displayPath});
+
+  final String sourcePath;
+  final String displayPath;
 }
 
 class _MutableSplitFolderGroup {

@@ -583,7 +583,7 @@ class _LocalFileTools {
 
   String _relative(Directory root, String entityPath) {
     final rel = path.relative(entityPath, from: root.path);
-    return rel == '.' ? '' : path.split(rel).join('/');
+    return rel == '.' ? '' : rel;
   }
 
   int _intArg(

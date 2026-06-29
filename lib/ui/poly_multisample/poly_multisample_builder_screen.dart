@@ -1,13 +1,17 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 
+import 'package:archive/archive.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:html/dom.dart' as html_dom;
+import 'package:html/parser.dart' as html_parser;
 import 'package:nt_helper/cubit/disting_cubit.dart';
 import 'package:nt_helper/domain/i_disting_midi_manager.dart';
 import 'package:path/path.dart' as p;
@@ -28,6 +32,10 @@ class PolyMultisampleBuilderScreen extends StatefulWidget {
 
 enum _DecentImportSourceKind { file, folder }
 
+enum _PolyMultisampleSourceMode { local, ntSd, custom }
+
+enum _CustomDraftSeed { empty, files, folder }
+
 class _PolyMultisampleBuilderScreenState
     extends State<PolyMultisampleBuilderScreen> {
   static const _lastLocalSampleFolderKey =
@@ -36,16 +44,20 @@ class _PolyMultisampleBuilderScreenState
       'poly_multisample.last_decent_source_folder';
   static const _lastImportOutputFolderKey =
       'poly_multisample.last_import_output_folder';
+  static const _lastCustomSourceFolderKey =
+      'poly_multisample.last_custom_source_folder';
   static const _legacyLastDecentOutputFolderKey =
       'poly_multisample.last_decent_output_folder';
 
   PolySampleInstrument? _instrument;
   PolySampleRegion? _selectedRegion;
+  _PolyMultisampleSourceMode? _sourceMode;
   bool _loading = false;
   String? _error;
   String? _lastLocalSampleFolder;
   String? _lastDecentSourceFolder;
   String? _lastImportOutputFolder;
+  String? _lastCustomSourceFolder;
 
   @override
   void initState() {
@@ -62,6 +74,7 @@ class _PolyMultisampleBuilderScreenState
       _lastImportOutputFolder =
           prefs.getString(_lastImportOutputFolderKey) ??
           prefs.getString(_legacyLastDecentOutputFolderKey);
+      _lastCustomSourceFolder = prefs.getString(_lastCustomSourceFolderKey);
     });
   }
 
@@ -99,6 +112,7 @@ class _PolyMultisampleBuilderScreenState
       final instrument = await PolyMultisampleFolderReader.readDirectory(path);
       setState(() {
         _instrument = instrument;
+        _sourceMode = _PolyMultisampleSourceMode.local;
         _selectedRegion = instrument.regions.isEmpty
             ? null
             : instrument.regions.first;
@@ -157,6 +171,7 @@ class _PolyMultisampleBuilderScreenState
       );
       setState(() {
         _instrument = instrument;
+        _sourceMode = _PolyMultisampleSourceMode.ntSd;
         _selectedRegion = instrument.regions.isEmpty
             ? null
             : instrument.regions.first;
@@ -237,6 +252,7 @@ class _PolyMultisampleBuilderScreenState
       if (!mounted) return;
       setState(() {
         _instrument = instrument;
+        _sourceMode = _PolyMultisampleSourceMode.local;
         _selectedRegion = instrument.regions.isEmpty
             ? null
             : instrument.regions.first;
@@ -311,6 +327,110 @@ class _PolyMultisampleBuilderScreenState
       );
     }
     return path;
+  }
+
+  Future<void> _startCustomDraft() async {
+    final seed = await showDialog<_CustomDraftSeed>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Custom multisample'),
+        content: const Text(
+          'Collect samples from different sources, choose what to keep, then '
+          'map and save them as a Disting NT multisample folder.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          OutlinedButton.icon(
+            onPressed: () => Navigator.of(context).pop(_CustomDraftSeed.empty),
+            icon: const Icon(Icons.add_box_outlined),
+            label: const Text('Empty draft'),
+          ),
+          OutlinedButton.icon(
+            onPressed: () => Navigator.of(context).pop(_CustomDraftSeed.folder),
+            icon: const Icon(Icons.folder_open),
+            label: const Text('Add folder'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.of(context).pop(_CustomDraftSeed.files),
+            icon: const Icon(Icons.audio_file),
+            label: const Text('Add files'),
+          ),
+        ],
+      ),
+    );
+    if (seed == null) return;
+
+    var regions = <PolySampleRegion>[];
+    if (seed == _CustomDraftSeed.files) {
+      regions = await _pickCustomSourceFiles();
+      if (regions.isEmpty) return;
+    } else if (seed == _CustomDraftSeed.folder) {
+      final path = await FilePicker.getDirectoryPath(
+        dialogTitle: 'Choose source folder',
+        initialDirectory:
+            _existingDirectory(_lastCustomSourceFolder) ??
+            _existingDirectory(_lastLocalSampleFolder) ??
+            _existingDirectory(_lastImportOutputFolder),
+      );
+      if (path == null) return;
+      if (!mounted) return;
+      setState(() => _lastCustomSourceFolder = path);
+      unawaited(_savePickerPreference(_lastCustomSourceFolderKey, path));
+      regions = await _pickSelectedDecentWavs(context, path);
+      if (regions.isEmpty && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No WAV files found in that folder.')),
+        );
+      }
+    }
+
+    PolyMultisampleFolderReader.sortRegions(regions);
+    setState(() {
+      _instrument = PolySampleInstrument(
+        name: 'Custom draft',
+        sourcePath: 'Custom draft (not saved)',
+        regions: regions,
+      );
+      _sourceMode = _PolyMultisampleSourceMode.custom;
+      _selectedRegion = regions.isEmpty ? null : regions.first;
+      _error = null;
+    });
+  }
+
+  Future<List<PolySampleRegion>> _pickCustomSourceFiles() async {
+    final result = await FilePicker.pickFiles(
+      dialogTitle: 'Choose WAVs or Decent Sampler sources',
+      type: FileType.custom,
+      allowedExtensions: const ['wav', 'dspreset', 'dslibrary', 'zip'],
+      allowMultiple: true,
+      initialDirectory:
+          _existingDirectory(_lastCustomSourceFolder) ??
+          _existingDirectory(_lastLocalSampleFolder) ??
+          _existingDirectory(_lastImportOutputFolder),
+    );
+    final paths = result?.files.map((file) => file.path).nonNulls.toList();
+    if (paths == null || paths.isEmpty) return const [];
+    final folder = p.dirname(paths.first);
+    setState(() => _lastCustomSourceFolder = folder);
+    unawaited(_savePickerPreference(_lastCustomSourceFolderKey, folder));
+    final regions = <PolySampleRegion>[];
+    for (final path in paths) {
+      final extension = p.extension(path).toLowerCase();
+      if (extension == '.wav') {
+        regions.add(_customRegionFromFile(File(path)));
+      } else {
+        if (!mounted) return regions;
+        regions.addAll(await _pickSelectedDecentWavs(context, path));
+      }
+    }
+    return regions;
+  }
+
+  Future<void> _loadSavedCustomFolder(String path) async {
+    await _loadFolder(path);
   }
 
   Future<void> _showConversionResult(
@@ -410,9 +530,9 @@ class _PolyMultisampleBuilderScreenState
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final instrument = _instrument;
-    final sourcePath = instrument?.sourcePath;
-    final ntSdSelected = sourcePath != null && _isNtSdPath(sourcePath);
-    final localSelected = sourcePath != null && !ntSdSelected;
+    final ntSdSelected = _sourceMode == _PolyMultisampleSourceMode.ntSd;
+    final localSelected = _sourceMode == _PolyMultisampleSourceMode.local;
+    final customSelected = _sourceMode == _PolyMultisampleSourceMode.custom;
 
     return Column(
       children: [
@@ -459,6 +579,13 @@ class _PolyMultisampleBuilderScreenState
                   label: 'Local',
                 ),
                 const SizedBox(width: 8),
+                _SourceButton(
+                  selected: customSelected,
+                  onPressed: _loading ? null : _startCustomDraft,
+                  icon: Icons.playlist_add,
+                  label: 'Custom',
+                ),
+                const SizedBox(width: 8),
                 OutlinedButton.icon(
                   onPressed: _loading ? null : _importDecentSampler,
                   icon: const Icon(Icons.file_upload_outlined),
@@ -485,14 +612,17 @@ class _PolyMultisampleBuilderScreenState
                   onChooseFolder: _chooseFolder,
                   onChooseNtSdFolder: _chooseNtSdFolder,
                   onImportDecentSampler: _importDecentSampler,
+                  onStartCustomDraft: _startCustomDraft,
                 )
               : _InstrumentEditor(
                   instrument: instrument,
+                  isCustomDraft: customSelected,
                   selectedRegion: _selectedRegion,
                   onChooseFolder: _chooseFolder,
                   onSelectRegion: (region) {
                     setState(() => _selectedRegion = region);
                   },
+                  onCustomSaved: _loadSavedCustomFolder,
                 ),
         ),
       ],
@@ -535,11 +665,13 @@ class _EmptyBuilderView extends StatelessWidget {
     required this.onChooseFolder,
     required this.onChooseNtSdFolder,
     required this.onImportDecentSampler,
+    required this.onStartCustomDraft,
   });
 
   final VoidCallback onChooseFolder;
   final VoidCallback onChooseNtSdFolder;
   final VoidCallback onImportDecentSampler;
+  final VoidCallback onStartCustomDraft;
 
   @override
   Widget build(BuildContext context) {
@@ -581,6 +713,11 @@ class _EmptyBuilderView extends StatelessWidget {
                   onPressed: onChooseFolder,
                   icon: const Icon(Icons.folder_open),
                   label: const Text('Open Local Folder'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: onStartCustomDraft,
+                  icon: const Icon(Icons.playlist_add),
+                  label: const Text('Custom'),
                 ),
                 OutlinedButton.icon(
                   onPressed: onImportDecentSampler,
@@ -667,6 +804,7 @@ class _DecentImportOptionsDialogState
   DecentSamplerGroupHandling _handling =
       DecentSamplerGroupHandling.velocityLayers;
   String? _selectedGroupKey;
+  bool _includeSourceDocs = true;
 
   @override
   void initState() {
@@ -771,6 +909,17 @@ class _DecentImportOptionsDialogState
                     'Keep the automatic parser behavior and report any ambiguity.',
                 onChanged: _setHandling,
               ),
+              const SizedBox(height: 12),
+              SwitchListTile(
+                value: _includeSourceDocs,
+                onChanged: (value) =>
+                    setState(() => _includeSourceDocs = value),
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Include source docs/licenses'),
+                subtitle: const Text(
+                  'Copies likely license, readme, manual, info, and artwork files into _source_docs.',
+                ),
+              ),
             ],
           ),
         ),
@@ -789,6 +938,7 @@ class _DecentImportOptionsDialogState
                     _handling == DecentSamplerGroupHandling.selectedGroup
                     ? _selectedGroupKey
                     : null,
+                includeSourceDocs: _includeSourceDocs,
               ),
             );
           },
@@ -1175,15 +1325,19 @@ class _ErrorView extends StatelessWidget {
 class _InstrumentEditor extends StatefulWidget {
   const _InstrumentEditor({
     required this.instrument,
+    required this.isCustomDraft,
     required this.selectedRegion,
     required this.onChooseFolder,
     required this.onSelectRegion,
+    required this.onCustomSaved,
   });
 
   final PolySampleInstrument instrument;
+  final bool isCustomDraft;
   final PolySampleRegion? selectedRegion;
   final Future<void> Function() onChooseFolder;
   final ValueChanged<PolySampleRegion> onSelectRegion;
+  final Future<void> Function(String path) onCustomSaved;
 
   @override
   State<_InstrumentEditor> createState() => _InstrumentEditorState();
@@ -1192,6 +1346,10 @@ class _InstrumentEditor extends StatefulWidget {
 class _InstrumentEditorState extends State<_InstrumentEditor> {
   static const _lastWavExportFolderKey =
       'poly_multisample.last_wav_export_folder';
+  static const _lastCustomOutputFolderKey =
+      'poly_multisample.last_custom_output_folder';
+  static const _lastCustomSourceFolderKey =
+      'poly_multisample.last_custom_source_folder';
 
   late List<PolySampleRegion> _regions;
   late List<PolySampleRegion> _baselineRegions;
@@ -1221,12 +1379,18 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
   double _previewGainDb = 0;
   _WaveformMode _waveformMode = _WaveformMode.metadata;
   String? _lastWavExportFolder;
+  String? _lastCustomOutputFolder;
+  String? _lastCustomSourceFolder;
+  Set<String> _selectedPaths = {};
+  int? _lastListSelectedIndex;
 
   @override
   void initState() {
     super.initState();
     _resetDraft();
     unawaited(_loadWavExportPreference());
+    unawaited(_loadCustomOutputPreference());
+    unawaited(_loadCustomSourcePreference());
     _playerStateSubscription = _samplePlayer.onPlayerStateChanged.listen((
       state,
     ) {
@@ -1276,6 +1440,22 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
     });
   }
 
+  Future<void> _loadCustomOutputPreference() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() {
+      _lastCustomOutputFolder = prefs.getString(_lastCustomOutputFolderKey);
+    });
+  }
+
+  Future<void> _loadCustomSourcePreference() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() {
+      _lastCustomSourceFolder = prefs.getString(_lastCustomSourceFolderKey);
+    });
+  }
+
   String? _existingDirectory(String? path) {
     if (path == null || path.isEmpty) return null;
     return Directory(path).existsSync() ? path : null;
@@ -1286,6 +1466,19 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
     setState(() => _lastWavExportFolder = folder);
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_lastWavExportFolderKey, folder);
+  }
+
+  Future<void> _saveCustomOutputFolder(String path) async {
+    setState(() => _lastCustomOutputFolder = path);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_lastCustomOutputFolderKey, path);
+  }
+
+  Future<void> _saveCustomSourceFolder(String path) async {
+    final folder = Directory(path).existsSync() ? path : p.dirname(path);
+    setState(() => _lastCustomSourceFolder = folder);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_lastCustomSourceFolderKey, folder);
   }
 
   void _resetDraft() {
@@ -1305,6 +1498,10 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
     _selectedPath =
         widget.selectedRegion?.path ??
         (_regions.isEmpty ? null : _regions.first.path);
+    _selectedPaths = _selectedPath == null ? {} : {_selectedPath!};
+    _lastListSelectedIndex = _selectedPath == null
+        ? null
+        : _regions.indexWhere((region) => region.path == _selectedPath);
   }
 
   void _ensureMapLanes() {
@@ -1327,7 +1524,45 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
   }
 
   void _selectRegion(PolySampleRegion region) {
-    setState(() => _selectedPath = region.path);
+    setState(() {
+      _selectedPath = region.path;
+      _selectedPaths = {region.path};
+      _lastListSelectedIndex = _regions.indexWhere(
+        (candidate) => candidate.path == region.path,
+      );
+    });
+    widget.onSelectRegion(region);
+    if (_autoPreviewOnSelect && !_isNtSdPath(region.path)) {
+      unawaited(_playSamplePreview(region));
+    }
+  }
+
+  void _selectRegionFromList(
+    PolySampleRegion region, {
+    required bool toggle,
+    required bool extend,
+  }) {
+    final index = _regions.indexWhere(
+      (candidate) => candidate.path == region.path,
+    );
+    setState(() {
+      _selectedPath = region.path;
+      if (extend && _lastListSelectedIndex != null && index >= 0) {
+        final start = math.min(_lastListSelectedIndex!, index);
+        final end = math.max(_lastListSelectedIndex!, index);
+        _selectedPaths = {for (var i = start; i <= end; i++) _regions[i].path};
+      } else if (toggle) {
+        final next = Set<String>.of(_selectedPaths);
+        if (!next.remove(region.path)) {
+          next.add(region.path);
+        }
+        _selectedPaths = next.isEmpty ? {region.path} : next;
+        _lastListSelectedIndex = index < 0 ? _lastListSelectedIndex : index;
+      } else {
+        _selectedPaths = {region.path};
+        _lastListSelectedIndex = index < 0 ? null : index;
+      }
+    });
     widget.onSelectRegion(region);
     if (_autoPreviewOnSelect && !_isNtSdPath(region.path)) {
       unawaited(_playSamplePreview(region));
@@ -1349,6 +1584,212 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
     if (selected != null) {
       widget.onSelectRegion(selected);
     }
+  }
+
+  Future<void> _addCustomWavs() async {
+    if (!widget.isCustomDraft) return;
+    final result = await FilePicker.pickFiles(
+      dialogTitle: 'Add WAVs or Decent Sampler sources',
+      type: FileType.custom,
+      allowedExtensions: const ['wav', 'dspreset', 'dslibrary', 'zip'],
+      allowMultiple: true,
+      initialDirectory:
+          _existingDirectory(_lastCustomSourceFolder) ??
+          _existingDirectory(_lastWavExportFolder) ??
+          _existingDirectory(_lastCustomOutputFolder),
+    );
+    final paths = result?.files.map((file) => file.path).nonNulls.toList();
+    if (paths == null || paths.isEmpty) return;
+    final regions = <PolySampleRegion>[];
+    for (final path in paths) {
+      final extension = p.extension(path).toLowerCase();
+      if (extension == '.wav') {
+        regions.add(_customRegionFromFile(File(path)));
+      } else {
+        if (!mounted) return;
+        regions.addAll(await _pickSelectedDecentWavs(context, path));
+      }
+    }
+    unawaited(_saveCustomSourceFolder(paths.first));
+    _addCustomRegions(regions);
+  }
+
+  Future<void> _addCustomFolder() async {
+    if (!widget.isCustomDraft) return;
+    final path = await FilePicker.getDirectoryPath(
+      dialogTitle: 'Add source folder',
+      initialDirectory:
+          _existingDirectory(_lastCustomSourceFolder) ??
+          _existingDirectory(_lastWavExportFolder) ??
+          _existingDirectory(_lastCustomOutputFolder),
+    );
+    if (path == null) return;
+    if (!mounted) return;
+    unawaited(_saveCustomSourceFolder(path));
+    final regions = await _pickSelectedDecentWavs(context, path);
+    if (regions.isEmpty && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No WAV files found in that folder.')),
+      );
+      return;
+    }
+    _addCustomRegions(regions);
+  }
+
+  void _addCustomRegions(Iterable<PolySampleRegion> regions) {
+    final existing = _regions.map((region) => region.path).toSet();
+    final additions = regions
+        .where((region) => !existing.contains(region.path))
+        .toList();
+    if (additions.isEmpty) return;
+    setState(() {
+      _regions.addAll(additions);
+      PolyMultisampleFolderReader.sortRegions(_regions);
+      _baselineRegions = List<PolySampleRegion>.of(_regions);
+      _mapLanes = _sortedSampleLanes(_regions);
+      _mapMinMidi = _initialMapMinMidi(_regions);
+      _mapMaxMidi = _initialMapMaxMidi(_regions, _mapMinMidi);
+      _mapRevision++;
+      _selectedPath = additions.first.path;
+      _selectedPaths = {additions.first.path};
+      _lastListSelectedIndex = _regions.indexWhere(
+        (region) => region.path == additions.first.path,
+      );
+    });
+    final selected = _selectedRegion;
+    if (selected != null) {
+      widget.onSelectRegion(selected);
+    }
+  }
+
+  void _removeSelectedCustomRegion() {
+    if (!widget.isCustomDraft) return;
+    final targets = _selectedPaths.isEmpty
+        ? {_selectedPath}.whereType<String>().toSet()
+        : Set<String>.of(_selectedPaths);
+    if (targets.isEmpty) return;
+    final firstIndex = _regions.indexWhere(
+      (region) => targets.contains(region.path),
+    );
+    if (firstIndex < 0) return;
+    setState(() {
+      _regions.removeWhere((region) => targets.contains(region.path));
+      _baselineRegions = List<PolySampleRegion>.of(_regions);
+      for (final path in targets) {
+        _waveformCache.remove(path);
+        _waveformFutures.remove(path);
+        _loopDrafts.remove(path);
+        _savedLoopDrafts.remove(path);
+        _loopMetadataPresent.remove(path);
+        _loopEnabledDrafts.remove(path);
+        _wavEditDrafts.remove(path);
+      }
+      _mapLanes = _sortedSampleLanes(_regions);
+      _mapMinMidi = _initialMapMinMidi(_regions);
+      _mapMaxMidi = _initialMapMaxMidi(_regions, _mapMinMidi);
+      _mapRevision++;
+      if (_regions.isEmpty) {
+        _selectedPath = null;
+        _selectedPaths = {};
+        _lastListSelectedIndex = null;
+      } else {
+        final nextIndex = firstIndex.clamp(0, _regions.length - 1).toInt();
+        _selectedPath = _regions[nextIndex].path;
+        _selectedPaths = {_selectedPath!};
+        _lastListSelectedIndex = nextIndex;
+      }
+    });
+    final selected = _selectedRegion;
+    if (selected != null) {
+      widget.onSelectRegion(selected);
+    }
+  }
+
+  Future<void> _saveCustomDraft({required bool saveAs}) async {
+    if (!widget.isCustomDraft || _regions.isEmpty || _applying) return;
+    var outputPath = saveAs ? null : _lastCustomOutputFolder;
+    if (outputPath == null || !Directory(outputPath).existsSync()) {
+      outputPath = await FilePicker.getDirectoryPath(
+        dialogTitle: 'Choose custom Disting output folder',
+        initialDirectory: _existingDirectory(_lastCustomOutputFolder),
+      );
+    }
+    if (outputPath == null) return;
+
+    setState(() => _applying = true);
+    try {
+      await Directory(outputPath).create(recursive: true);
+      final copied = await _copyCustomDraftTo(outputPath);
+      await _saveCustomOutputFolder(outputPath);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Saved ${copied.length} sample(s).')),
+        );
+      }
+      await widget.onCustomSaved(outputPath);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Custom save failed: $e')));
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _applying = false);
+      }
+    }
+  }
+
+  Future<List<String>> _copyCustomDraftTo(String outputPath) async {
+    final reservedNames = <String, int>{};
+    final copied = <String>[];
+    for (final region in _regions) {
+      final source = File(region.path);
+      if (!await source.exists()) {
+        throw Exception('Missing source WAV: ${region.path}');
+      }
+      final targetName = _targetSampleFileName(region, _regions, reservedNames);
+      final targetPath = p.join(outputPath, targetName);
+      await source.copy(targetPath);
+      copied.add(targetName);
+    }
+    await _writeCustomBuildReport(outputPath, copied);
+    return copied;
+  }
+
+  Future<void> _writeCustomBuildReport(
+    String outputPath,
+    List<String> copied,
+  ) async {
+    final buffer = StringBuffer()
+      ..writeln('# Custom Multisample Build Report')
+      ..writeln()
+      ..writeln('Generated by NT Helper Poly Multisample Builder.')
+      ..writeln()
+      ..writeln('## Output')
+      ..writeln()
+      ..writeln('- Folder: `$outputPath`')
+      ..writeln('- WAV files: ${copied.length}')
+      ..writeln()
+      ..writeln('## Samples')
+      ..writeln();
+    for (final region in _regions) {
+      final root = region.rootMidi == null
+          ? 'none'
+          : PolyMultisampleParser.midiToNoteName(region.rootMidi!);
+      final range = _rangeBoundsForRegion(region, _regions);
+      final rangeText = range == null
+          ? 'none'
+          : '${PolyMultisampleParser.midiToNoteName(range.start)}-'
+                '${PolyMultisampleParser.midiToNoteName(range.end)}';
+      buffer.writeln(
+        '- `${region.fileName}`: root $root, range $rangeText, '
+        'V${region.velocityLayer ?? 1}, RR${region.roundRobin ?? 1}',
+      );
+    }
+    await File(
+      p.join(outputPath, '_CUSTOM_BUILD_REPORT.md'),
+    ).writeAsString(buffer.toString(), flush: true);
   }
 
   void _updateLoopFor(PolySampleRegion region, _LoopMarkerDraft markers) {
@@ -1905,6 +2346,7 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
   }
 
   bool get _hasDraftChanges {
+    if (widget.isCustomDraft) return false;
     final original = {
       for (final region in _baselineRegions) region.path: region,
     };
@@ -2072,6 +2514,51 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
                 const SizedBox(width: 12),
                 _DraftStatusChip(dirty: _hasDraftChanges),
                 const SizedBox(width: 8),
+                if (widget.isCustomDraft) ...[
+                  OutlinedButton.icon(
+                    onPressed: _addCustomWavs,
+                    icon: const Icon(Icons.audio_file, size: 18),
+                    label: const Text('Add files'),
+                  ),
+                  const SizedBox(width: 8),
+                  OutlinedButton.icon(
+                    onPressed: _addCustomFolder,
+                    icon: const Icon(Icons.folder_open, size: 18),
+                    label: const Text('Add folder'),
+                  ),
+                  const SizedBox(width: 8),
+                  OutlinedButton.icon(
+                    onPressed: _selectedPaths.isEmpty
+                        ? null
+                        : _removeSelectedCustomRegion,
+                    icon: const Icon(Icons.remove_circle_outline, size: 18),
+                    label: Text(
+                      _selectedPaths.length > 1
+                          ? 'Remove ${_selectedPaths.length}'
+                          : 'Remove',
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  OutlinedButton.icon(
+                    onPressed: _regions.isEmpty || _applying
+                        ? null
+                        : () => _saveCustomDraft(saveAs: true),
+                    icon: const Icon(Icons.save_as, size: 18),
+                    label: const Text('Save as'),
+                  ),
+                  const SizedBox(width: 8),
+                  FilledButton.icon(
+                    onPressed:
+                        _regions.isEmpty ||
+                            _applying ||
+                            _lastCustomOutputFolder == null
+                        ? null
+                        : () => _saveCustomDraft(saveAs: false),
+                    icon: const Icon(Icons.save, size: 18),
+                    label: Text(_applying ? 'Saving...' : 'Save'),
+                  ),
+                  const SizedBox(width: 8),
+                ],
                 FilterChip(
                   avatar: const Icon(Icons.volume_up, size: 16),
                   label: const Text('Auto preview'),
@@ -2085,21 +2572,23 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
                   onChanged: _setPreviewGainDb,
                 ),
                 const SizedBox(width: 8),
-                OutlinedButton.icon(
-                  onPressed: _hasDraftChanges && !_applying
-                      ? _discardDraft
-                      : null,
-                  icon: const Icon(Icons.undo, size: 18),
-                  label: const Text('Discard'),
-                ),
-                const SizedBox(width: 8),
-                FilledButton.icon(
-                  onPressed: _hasDraftChanges && !_applying
-                      ? _applyDraft
-                      : null,
-                  icon: const Icon(Icons.save, size: 18),
-                  label: Text(_applying ? 'Applying...' : 'Apply'),
-                ),
+                if (!widget.isCustomDraft) ...[
+                  OutlinedButton.icon(
+                    onPressed: _hasDraftChanges && !_applying
+                        ? _discardDraft
+                        : null,
+                    icon: const Icon(Icons.undo, size: 18),
+                    label: const Text('Discard'),
+                  ),
+                  const SizedBox(width: 8),
+                  FilledButton.icon(
+                    onPressed: _hasDraftChanges && !_applying
+                        ? _applyDraft
+                        : null,
+                    icon: const Icon(Icons.save, size: 18),
+                    label: Text(_applying ? 'Applying...' : 'Apply'),
+                  ),
+                ],
               ],
             ),
           ),
@@ -2127,7 +2616,9 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
                         child: _SampleList(
                           regions: instrument.regions,
                           selected: selected,
+                          selectedPaths: _selectedPaths,
                           onSelectRegion: _selectRegion,
+                          onSelectRegionFromList: _selectRegionFromList,
                           onChangeRegion: _updateRegion,
                           onChangeRoot: _updateRootFor,
                           onChangeVelocity: _updateVelocityFor,
@@ -2207,6 +2698,718 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
 }
 
 bool _isNtSdPath(String path) => path.startsWith('/');
+
+bool _isIgnoredSampleSidecar(String name) {
+  return name == '.DS_Store' || name.startsWith('._');
+}
+
+Future<List<PolySampleRegion>> _pickSelectedDecentWavs(
+  BuildContext context,
+  String sourcePath,
+) async {
+  final groups = await _decentWavGroups(sourcePath);
+  final candidates = groups.expand((group) => group.candidates).toList();
+  if (!context.mounted || candidates.isEmpty) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No WAV files found in that source.')),
+      );
+    }
+    return const [];
+  }
+  final selected = await showDialog<Set<_DecentWavCandidate>>(
+    context: context,
+    builder: (context) => _DecentWavSelectionDialog(groups: groups),
+  );
+  if (selected == null || selected.isEmpty) return const [];
+
+  final regions = <PolySampleRegion>[];
+  for (final candidate
+      in selected.toList()..sort(
+        (a, b) => a.label.toLowerCase().compareTo(b.label.toLowerCase()),
+      )) {
+    final file = await candidate.materialize();
+    regions.add(candidate.toRegion(file));
+  }
+  return regions;
+}
+
+Future<List<_DecentWavGroup>> _decentWavGroups(String sourcePath) async {
+  final sourceDir = Directory(sourcePath);
+  if (await sourceDir.exists()) {
+    final presets = <File>[];
+    final rawWavs = <File>[];
+    await for (final entity in sourceDir.list(
+      recursive: true,
+      followLinks: false,
+    )) {
+      if (entity is! File) continue;
+      final name = p.basename(entity.path);
+      if (_isIgnoredSampleSidecar(name)) continue;
+      final extension = p.extension(name).toLowerCase();
+      if (extension == '.dspreset') {
+        presets.add(entity);
+      } else if (extension == '.wav') {
+        rawWavs.add(entity);
+      }
+    }
+    presets.sort(
+      (a, b) => a.path.toLowerCase().compareTo(b.path.toLowerCase()),
+    );
+    if (presets.isNotEmpty) {
+      final groups = <_DecentWavGroup>[];
+      for (final preset in presets) {
+        groups.addAll(
+          await _groupsFromLocalDspreset(
+            preset,
+            prefixName: presets.length > 1,
+          ),
+        );
+      }
+      if (groups.isNotEmpty) return groups;
+    }
+    return _groupsFromLocalWavs(rawWavs, sourceDir.path);
+  }
+
+  final extension = p.extension(sourcePath).toLowerCase();
+  if (extension == '.dspreset') {
+    return _groupsFromLocalDspreset(File(sourcePath));
+  }
+  if (extension == '.zip' || extension == '.dslibrary') {
+    return _groupsFromArchive(File(sourcePath));
+  }
+  return const [];
+}
+
+Future<List<_DecentWavGroup>> _groupsFromLocalDspreset(
+  File preset, {
+  bool prefixName = false,
+}) async {
+  final content = await preset.readAsString();
+  return _groupsFromDecentXml(
+    content,
+    presetName: p.basenameWithoutExtension(preset.path),
+    prefixName: prefixName,
+    makeCandidate: (samplePath, groupLabel, mapping) async {
+      final file = File(p.normalize(p.join(preset.parent.path, samplePath)));
+      if (!await file.exists()) return null;
+      return _LocalDecentWavCandidate(
+        file: file,
+        label: samplePath,
+        groupLabel: groupLabel,
+        mapping: mapping,
+      );
+    },
+  );
+}
+
+Future<List<_DecentWavGroup>> _groupsFromArchive(File archiveFile) async {
+  final archive = ZipDecoder().decodeBytes(await archiveFile.readAsBytes());
+  final files = <String, ArchiveFile>{};
+  final filesByLowerPath = <String, ArchiveFile>{};
+  for (final entry in archive) {
+    if (!entry.isFile) continue;
+    final name = entry.name.replaceAll('\\', '/');
+    if (_isMacOsArchiveJunkPath(name)) continue;
+    final normalized = _normalizeArchivePath(name);
+    files[normalized] = entry;
+    filesByLowerPath[normalized.toLowerCase()] = entry;
+  }
+  final presets =
+      files.entries
+          .where(
+            (entry) =>
+                p.posix.extension(entry.key).toLowerCase() == '.dspreset',
+          )
+          .toList()
+        ..sort((a, b) => a.key.toLowerCase().compareTo(b.key.toLowerCase()));
+  if (presets.isNotEmpty) {
+    final groups = <_DecentWavGroup>[];
+    for (final preset in presets) {
+      final bytes = preset.value.content as List<int>;
+      groups.addAll(
+        await _groupsFromDecentXml(
+          utf8.decode(bytes, allowMalformed: true),
+          presetName: p.posix.basenameWithoutExtension(preset.key),
+          prefixName: presets.length > 1,
+          makeCandidate: (samplePath, groupLabel, mapping) async {
+            final resolved = _resolveArchiveSamplePath(preset.key, samplePath);
+            final direct = _normalizeArchivePath(samplePath);
+            final entry =
+                files[resolved] ??
+                files[direct] ??
+                filesByLowerPath[resolved.toLowerCase()] ??
+                filesByLowerPath[direct.toLowerCase()];
+            if (entry == null) return null;
+            return _ArchiveDecentWavCandidate(
+              sourceName: p.basenameWithoutExtension(archiveFile.path),
+              entry: entry,
+              label: samplePath,
+              groupLabel: groupLabel,
+              mapping: mapping,
+            );
+          },
+        ),
+      );
+    }
+    if (groups.isNotEmpty) return groups;
+  }
+  final wavs = files.entries
+      .where((entry) => p.posix.extension(entry.key).toLowerCase() == '.wav')
+      .map(
+        (entry) => _ArchiveDecentWavCandidate(
+          sourceName: p.basenameWithoutExtension(archiveFile.path),
+          entry: entry.value,
+          label: entry.key,
+          groupLabel: p.posix.dirname(entry.key),
+        ),
+      )
+      .toList();
+  return _groupsFromCandidates(wavs);
+}
+
+Future<List<_DecentWavGroup>> _groupsFromDecentXml(
+  String content, {
+  required String presetName,
+  required bool prefixName,
+  required Future<_DecentWavCandidate?> Function(
+    String samplePath,
+    String groupLabel,
+    _DecentSampleMapping mapping,
+  )
+  makeCandidate,
+}) async {
+  final doc = html_parser.parse(content);
+  var groupElements = doc.querySelectorAll('group');
+  if (groupElements.isEmpty) {
+    groupElements = [doc.body ?? doc.documentElement!];
+  }
+  final groups = <_DecentWavGroup>[];
+  for (var index = 0; index < groupElements.length; index++) {
+    final group = groupElements[index];
+    final samples = group.querySelectorAll('sample');
+    if (samples.isEmpty) continue;
+    final rawLabel = _decentGroupLabel(group, index);
+    final label = prefixName ? '$presetName / $rawLabel' : rawLabel;
+    final mappings = _decentSampleMappings(group, samples);
+    final candidates = <_DecentWavCandidate>[];
+    for (final mapping in mappings) {
+      final samplePath = mapping.path;
+      if (samplePath == null) continue;
+      final candidate = await makeCandidate(samplePath, label, mapping);
+      if (candidate != null) candidates.add(candidate);
+    }
+    if (candidates.isEmpty) continue;
+    candidates.sort(
+      (a, b) => a.label.toLowerCase().compareTo(b.label.toLowerCase()),
+    );
+    groups.add(
+      _DecentWavGroup(
+        label: label,
+        detail: _groupDetail(candidates),
+        candidates: candidates,
+      ),
+    );
+  }
+  groups.sort((a, b) => a.label.toLowerCase().compareTo(b.label.toLowerCase()));
+  return groups;
+}
+
+List<_DecentSampleMapping> _decentSampleMappings(
+  html_dom.Element group,
+  List<html_dom.Element> samples,
+) {
+  final groupAttrs = _decentAttrs(group);
+  final groupVelocityLow = _parseDecentInt(groupAttrs['lovel']);
+  final groupVelocityHigh = _parseDecentInt(groupAttrs['hivel']);
+  final groupSeqPosition = _parseDecentInt(groupAttrs['seqposition']);
+  final raw = <_DecentSampleMapping>[];
+
+  for (final sample in samples) {
+    final attrs = _decentAttrs(sample);
+    final path = _firstDecentAttr(attrs, const [
+      'path',
+      'filename',
+      'file',
+      'sample',
+    ])?.replaceAll('\\', '/');
+    final root = _parseDecentNote(
+      _firstDecentAttr(attrs, const [
+        'rootnote',
+        'pitchkeycenter',
+        'pitch_keycenter',
+        'keycenter',
+      ]),
+    );
+    final low = _parseDecentNote(
+      _firstDecentAttr(attrs, const ['lonote', 'lokey', 'lowkey']),
+    );
+    final velocityLow = _parseDecentInt(attrs['lovel']) ?? groupVelocityLow;
+    final velocityHigh = _parseDecentInt(attrs['hivel']) ?? groupVelocityHigh;
+    raw.add(
+      _DecentSampleMapping(
+        path: path,
+        rootMidi: root,
+        switchPoint: low ?? root,
+        velocityLow: velocityLow?.clamp(1, 127).toInt(),
+        velocityHigh: velocityHigh?.clamp(1, 127).toInt(),
+        seqPosition: _parseDecentInt(attrs['seqposition']) ?? groupSeqPosition,
+        loopStart: _parseDecentInt(attrs['loopstart']),
+        loopEnd: _parseDecentInt(attrs['loopend']),
+      ),
+    );
+  }
+
+  final velocityRanges =
+      raw
+          .where(
+            (mapping) =>
+                mapping.velocityLow != null || mapping.velocityHigh != null,
+          )
+          .map(
+            (mapping) =>
+                '${mapping.velocityLow ?? 1}-${mapping.velocityHigh ?? 127}',
+          )
+          .toSet()
+          .toList()
+        ..sort((a, b) {
+          final aLow = int.tryParse(a.split('-').first) ?? 1;
+          final bLow = int.tryParse(b.split('-').first) ?? 1;
+          return aLow.compareTo(bLow);
+        });
+  final velocityLayerByRange = {
+    for (var i = 0; i < velocityRanges.length; i++) velocityRanges[i]: i + 1,
+  };
+  final usedRoundRobins = <String, Set<int>>{};
+
+  return raw.map((mapping) {
+    final velocityKey =
+        '${mapping.velocityLow ?? 1}-${mapping.velocityHigh ?? 127}';
+    final velocityLayer = velocityLayerByRange[velocityKey] ?? 1;
+    final root = mapping.rootMidi;
+    final switchPoint = mapping.switchPoint ?? root;
+    final rrKey = '$root|$switchPoint|$velocityLayer';
+    final used = usedRoundRobins.putIfAbsent(rrKey, () => <int>{});
+    final requestedRoundRobin = mapping.seqPosition;
+    late final int assignedRoundRobin;
+    if (requestedRoundRobin != null &&
+        requestedRoundRobin > 0 &&
+        !used.contains(requestedRoundRobin)) {
+      assignedRoundRobin = requestedRoundRobin;
+    } else {
+      var nextRoundRobin = 1;
+      while (used.contains(nextRoundRobin)) {
+        nextRoundRobin++;
+      }
+      assignedRoundRobin = nextRoundRobin;
+    }
+    used.add(assignedRoundRobin);
+    return mapping.copyWith(
+      velocityLayer: velocityLayer,
+      roundRobin: assignedRoundRobin,
+    );
+  }).toList();
+}
+
+List<_DecentWavGroup> _groupsFromLocalWavs(List<File> files, String basePath) {
+  final candidates = files.map((file) {
+    final label = p.relative(file.path, from: basePath);
+    final groupLabel = p.dirname(label) == '.'
+        ? 'Loose WAVs'
+        : p.dirname(label);
+    return _LocalDecentWavCandidate(
+      file: file,
+      label: label,
+      groupLabel: groupLabel,
+    );
+  }).toList();
+  return _groupsFromCandidates(candidates);
+}
+
+List<_DecentWavGroup> _groupsFromCandidates(
+  List<_DecentWavCandidate> candidates,
+) {
+  final byGroup = <String, List<_DecentWavCandidate>>{};
+  for (final candidate in candidates) {
+    byGroup.putIfAbsent(candidate.groupLabel, () => []).add(candidate);
+  }
+  final groups = byGroup.entries.map((entry) {
+    final groupCandidates = entry.value
+      ..sort((a, b) => a.label.toLowerCase().compareTo(b.label.toLowerCase()));
+    return _DecentWavGroup(
+      label: entry.key,
+      detail: _groupDetail(groupCandidates),
+      candidates: groupCandidates,
+    );
+  }).toList();
+  groups.sort((a, b) => a.label.toLowerCase().compareTo(b.label.toLowerCase()));
+  return groups;
+}
+
+String _groupDetail(List<_DecentWavCandidate> candidates) {
+  final examples = candidates
+      .take(2)
+      .map((candidate) => p.basename(candidate.label))
+      .join(', ');
+  return '${candidates.length} WAV${candidates.length == 1 ? '' : 's'}'
+      '${examples.isEmpty ? '' : ' · e.g. $examples'}';
+}
+
+Map<String, String> _decentAttrs(html_dom.Element element) {
+  return {
+    for (final entry in element.attributes.entries)
+      entry.key.toString().toLowerCase(): entry.value.trim(),
+  };
+}
+
+String? _firstDecentAttr(Map<String, String> attrs, List<String> keys) {
+  for (final key in keys) {
+    final value = attrs[key];
+    if (value != null && value.isNotEmpty) return value;
+  }
+  return null;
+}
+
+String _decentGroupLabel(html_dom.Element group, int index) {
+  final attrs = _decentAttrs(group);
+  for (final key in const [
+    'name',
+    'label',
+    'tags',
+    'tag',
+    'articulation',
+    'mic',
+  ]) {
+    final value = attrs[key];
+    if (value != null && value.isNotEmpty) return value;
+  }
+  final interesting = <String>[];
+  for (final key in const [
+    'seqmode',
+    'seqposition',
+    'volume',
+    'lovel',
+    'hivel',
+  ]) {
+    final value = attrs[key];
+    if (value != null && value.isNotEmpty) {
+      interesting.add('$key=$value');
+    }
+  }
+  return interesting.isEmpty ? 'Group ${index + 1}' : interesting.join(', ');
+}
+
+int? _parseDecentInt(String? value) {
+  if (value == null || value.trim().isEmpty) return null;
+  return int.tryParse(value.trim());
+}
+
+int? _parseDecentNote(String? value) {
+  if (value == null || value.trim().isEmpty) return null;
+  final trimmed = value.trim();
+  return int.tryParse(trimmed) ?? PolyMultisampleParser.noteNameToMidi(trimmed);
+}
+
+String _normalizeArchivePath(String path) {
+  final normalized = p.posix.normalize(path.replaceAll('\\', '/'));
+  return normalized.replaceFirst(RegExp(r'^/+'), '');
+}
+
+String _resolveArchiveSamplePath(String presetPath, String samplePath) {
+  final presetDir = p.posix.dirname(presetPath);
+  final base = presetDir == '.' ? '' : presetDir;
+  final cleanSamplePath = _normalizeArchivePath(samplePath);
+  return _normalizeArchivePath(p.posix.join(base, cleanSamplePath));
+}
+
+bool _isMacOsArchiveJunkPath(String path) {
+  final parts = path.split('/');
+  return parts.any(
+    (part) =>
+        part == '__MACOSX' || part == '.DS_Store' || part.startsWith('._'),
+  );
+}
+
+PolySampleRegion _customRegionFromFile(
+  File file, {
+  String? basePath,
+  String? displayName,
+}) {
+  final fileName = p.basename(file.path);
+  final resolvedDisplayName =
+      displayName ??
+      (basePath == null ? fileName : p.relative(file.path, from: basePath));
+  return PolySampleRegion(
+    path: file.path,
+    fileName: fileName,
+    displayName: resolvedDisplayName,
+    velocityLayer: 1,
+    roundRobin: 1,
+    issues: const [PolySampleIssue.missingRootNote],
+  );
+}
+
+abstract class _DecentWavCandidate {
+  const _DecentWavCandidate({
+    required this.label,
+    required this.groupLabel,
+    this.mapping = const _DecentSampleMapping(),
+  });
+
+  final String label;
+  final String groupLabel;
+  final _DecentSampleMapping mapping;
+
+  Future<File> materialize();
+
+  PolySampleRegion toRegion(File file) {
+    final base = _customRegionFromFile(file, displayName: label);
+    final root = mapping.rootMidi;
+    final region = base.copyWith(
+      rootMidi: root,
+      rootName: root == null
+          ? null
+          : PolyMultisampleParser.midiToNoteName(root),
+      switchPoint: mapping.switchPoint,
+      velocityLayer: mapping.velocityLayer,
+      roundRobin: mapping.roundRobin,
+      loopStart: mapping.loopStart,
+      loopEnd: mapping.loopEnd,
+    );
+    return region.copyWithIssues(region.currentIssues);
+  }
+}
+
+class _LocalDecentWavCandidate extends _DecentWavCandidate {
+  const _LocalDecentWavCandidate({
+    required this.file,
+    required super.label,
+    required super.groupLabel,
+    super.mapping,
+  });
+
+  final File file;
+
+  @override
+  Future<File> materialize() async => file;
+}
+
+class _ArchiveDecentWavCandidate extends _DecentWavCandidate {
+  const _ArchiveDecentWavCandidate({
+    required this.sourceName,
+    required this.entry,
+    required super.label,
+    required super.groupLabel,
+    super.mapping,
+  });
+
+  final String sourceName;
+  final ArchiveFile entry;
+
+  @override
+  Future<File> materialize() async {
+    final dir = await Directory.systemTemp.createTemp('nt_helper_decent_pick_');
+    final safeSource = sourceName.replaceAll(RegExp(r'[\\/:*?"<>|]+'), '_');
+    final safeLabel = label.replaceAll(RegExp(r'[\\/:*?"<>|]+'), '_');
+    final file = File(p.join(dir.path, '${safeSource}_$safeLabel'));
+    await file.writeAsBytes(entry.content as List<int>);
+    return file;
+  }
+}
+
+class _DecentSampleMapping {
+  const _DecentSampleMapping({
+    this.path,
+    this.rootMidi,
+    this.switchPoint,
+    this.velocityLow,
+    this.velocityHigh,
+    this.seqPosition,
+    this.velocityLayer,
+    this.roundRobin,
+    this.loopStart,
+    this.loopEnd,
+  });
+
+  final String? path;
+  final int? rootMidi;
+  final int? switchPoint;
+  final int? velocityLow;
+  final int? velocityHigh;
+  final int? seqPosition;
+  final int? velocityLayer;
+  final int? roundRobin;
+  final int? loopStart;
+  final int? loopEnd;
+
+  _DecentSampleMapping copyWith({int? velocityLayer, int? roundRobin}) {
+    return _DecentSampleMapping(
+      path: path,
+      rootMidi: rootMidi,
+      switchPoint: switchPoint,
+      velocityLow: velocityLow,
+      velocityHigh: velocityHigh,
+      seqPosition: seqPosition,
+      velocityLayer: velocityLayer ?? this.velocityLayer,
+      roundRobin: roundRobin ?? this.roundRobin,
+      loopStart: loopStart,
+      loopEnd: loopEnd,
+    );
+  }
+}
+
+class _DecentWavGroup {
+  const _DecentWavGroup({
+    required this.label,
+    required this.detail,
+    required this.candidates,
+  });
+
+  final String label;
+  final String detail;
+  final List<_DecentWavCandidate> candidates;
+}
+
+class _DecentWavSelectionDialog extends StatefulWidget {
+  const _DecentWavSelectionDialog({required this.groups});
+
+  final List<_DecentWavGroup> groups;
+
+  @override
+  State<_DecentWavSelectionDialog> createState() =>
+      _DecentWavSelectionDialogState();
+}
+
+class _DecentWavSelectionDialogState extends State<_DecentWavSelectionDialog> {
+  final Set<_DecentWavCandidate> _selected = {};
+
+  int get _candidateCount =>
+      widget.groups.fold(0, (total, group) => total + group.candidates.length);
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return AlertDialog(
+      title: const Text('Select groups from Decent source'),
+      content: SizedBox(
+        width: 720,
+        height: 520,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '${widget.groups.length} group(s), $_candidateCount WAV file(s). Choose whole groups, or expand for individual WAVs.',
+              style: theme.textTheme.bodyMedium,
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                TextButton(
+                  onPressed: () => setState(() {
+                    _selected
+                      ..clear()
+                      ..addAll(
+                        widget.groups.expand((group) => group.candidates),
+                      );
+                  }),
+                  child: const Text('Select all'),
+                ),
+                TextButton(
+                  onPressed: () => setState(_selected.clear),
+                  child: const Text('Clear'),
+                ),
+              ],
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: ListView.builder(
+                itemCount: widget.groups.length,
+                itemBuilder: (context, index) {
+                  final group = widget.groups[index];
+                  final selectedCount = group.candidates
+                      .where(_selected.contains)
+                      .length;
+                  final checked = selectedCount == 0
+                      ? false
+                      : selectedCount == group.candidates.length
+                      ? true
+                      : null;
+                  return ExpansionTile(
+                    tilePadding: const EdgeInsets.symmetric(horizontal: 8),
+                    title: Row(
+                      children: [
+                        Checkbox(
+                          value: checked,
+                          tristate: true,
+                          onChanged: (value) => setState(() {
+                            if (value ?? false) {
+                              _selected.addAll(group.candidates);
+                            } else {
+                              _selected.removeAll(group.candidates);
+                            }
+                          }),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            group.label,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                    subtitle: Padding(
+                      padding: const EdgeInsets.only(left: 56),
+                      child: Text(
+                        group.detail,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    children: [
+                      for (final candidate in group.candidates)
+                        CheckboxListTile(
+                          dense: true,
+                          value: _selected.contains(candidate),
+                          title: Text(
+                            candidate.label,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          onChanged: (value) => setState(() {
+                            if (value ?? false) {
+                              _selected.add(candidate);
+                            } else {
+                              _selected.remove(candidate);
+                            }
+                          }),
+                        ),
+                    ],
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: _selected.isEmpty
+              ? null
+              : () => Navigator.of(
+                  context,
+                ).pop(Set<_DecentWavCandidate>.of(_selected)),
+          child: Text('Add ${_selected.length}'),
+        ),
+      ],
+    );
+  }
+}
 
 class _RenameChange {
   const _RenameChange({
@@ -3107,7 +4310,9 @@ class _SampleList extends StatefulWidget {
   const _SampleList({
     required this.regions,
     required this.selected,
+    required this.selectedPaths,
     required this.onSelectRegion,
+    required this.onSelectRegionFromList,
     required this.onChangeRegion,
     required this.onChangeRoot,
     required this.onChangeVelocity,
@@ -3117,7 +4322,14 @@ class _SampleList extends StatefulWidget {
 
   final List<PolySampleRegion> regions;
   final PolySampleRegion? selected;
+  final Set<String> selectedPaths;
   final ValueChanged<PolySampleRegion> onSelectRegion;
+  final void Function(
+    PolySampleRegion region, {
+    required bool toggle,
+    required bool extend,
+  })
+  onSelectRegionFromList;
   final ValueChanged<PolySampleRegion> onChangeRegion;
   final void Function(PolySampleRegion region, int value) onChangeRoot;
   final void Function(PolySampleRegion region, int value) onChangeVelocity;
@@ -3218,6 +4430,20 @@ class _SampleListState extends State<_SampleList> {
     return KeyEventResult.handled;
   }
 
+  void _handleRowTap(PolySampleRegion region) {
+    _focusNode.requestFocus();
+    final pressed = HardwareKeyboard.instance.logicalKeysPressed;
+    final toggle =
+        pressed.contains(LogicalKeyboardKey.controlLeft) ||
+        pressed.contains(LogicalKeyboardKey.controlRight) ||
+        pressed.contains(LogicalKeyboardKey.metaLeft) ||
+        pressed.contains(LogicalKeyboardKey.metaRight);
+    final extend =
+        pressed.contains(LogicalKeyboardKey.shiftLeft) ||
+        pressed.contains(LogicalKeyboardKey.shiftRight);
+    widget.onSelectRegionFromList(region, toggle: toggle, extend: extend);
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -3265,11 +4491,9 @@ class _SampleListState extends State<_SampleList> {
                       child: _SampleListRow(
                         region: region,
                         regions: widget.regions,
-                        selected: region.path == widget.selected?.path,
-                        onTap: () {
-                          _focusNode.requestFocus();
-                          widget.onSelectRegion(region);
-                        },
+                        selected: widget.selectedPaths.contains(region.path),
+                        primarySelected: region.path == widget.selected?.path,
+                        onTap: () => _handleRowTap(region),
                         onChangeRegion: widget.onChangeRegion,
                         onChangeRoot: widget.onChangeRoot,
                         onChangeVelocity: widget.onChangeVelocity,
@@ -3293,6 +4517,7 @@ class _SampleListRow extends StatelessWidget {
     required this.region,
     required this.regions,
     required this.selected,
+    required this.primarySelected,
     required this.onTap,
     required this.onChangeRegion,
     required this.onChangeRoot,
@@ -3304,6 +4529,7 @@ class _SampleListRow extends StatelessWidget {
   final PolySampleRegion region;
   final List<PolySampleRegion> regions;
   final bool selected;
+  final bool primarySelected;
   final VoidCallback onTap;
   final ValueChanged<PolySampleRegion> onChangeRegion;
   final void Function(PolySampleRegion region, int value) onChangeRoot;
@@ -3329,7 +4555,7 @@ class _SampleListRow extends StatelessWidget {
               Icon(
                 Icons.audio_file,
                 size: 20,
-                color: selected
+                color: primarySelected
                     ? colorScheme.primary
                     : colorScheme.onSurfaceVariant,
               ),
@@ -3340,7 +4566,9 @@ class _SampleListRow extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: theme.textTheme.bodyMedium?.copyWith(
-                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                    fontWeight: primarySelected
+                        ? FontWeight.w700
+                        : FontWeight.w500,
                   ),
                 ),
               ),

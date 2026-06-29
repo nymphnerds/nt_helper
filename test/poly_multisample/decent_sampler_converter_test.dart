@@ -257,6 +257,142 @@ void main() {
       );
     });
 
+    test('copies local source docs and artwork into output folders', () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'decent_converter_source_docs_test_',
+      );
+      addTearDown(() async {
+        if (await tempDir.exists()) await tempDir.delete(recursive: true);
+      });
+
+      final libraryDir = Directory('${tempDir.path}/Documented Library');
+      await libraryDir.create(recursive: true);
+      await _writeDummyWavs(libraryDir, ['Samples/C4.wav']);
+      await File('${libraryDir.path}/Documented.dspreset').writeAsString('''
+<DecentSampler>
+  <groups>
+    <group>
+      <sample path="Samples/C4.wav" rootNote="C4"/>
+    </group>
+  </groups>
+</DecentSampler>
+''');
+      await File('${libraryDir.path}/LICENSE.txt').writeAsString('license');
+      await File(
+        '${libraryDir.path}/Docs/User Guide.pdf',
+      ).create(recursive: true);
+      await File(
+        '${libraryDir.path}/Artwork/cover.png',
+      ).create(recursive: true);
+      await File(
+        '${libraryDir.path}/Images/ui_knob.png',
+      ).create(recursive: true);
+      await File('${libraryDir.path}/.DS_Store').writeAsString('junk');
+
+      final result = await DecentSamplerConverter().convert(
+        sourcePath: libraryDir.path,
+        outputParentPath: '${tempDir.path}/out',
+      );
+
+      expect(result.copiedFiles, 1);
+      expect(result.copiedDocumentationFiles, 3);
+      final docsDir = Directory('${result.outputFolders.single}/_source_docs');
+      final copiedDocs =
+          await docsDir
+                .list()
+                .where((entity) => entity is File)
+                .map((entity) => entity.uri.pathSegments.last)
+                .toList()
+            ..sort();
+
+      expect(copiedDocs, ['LICENSE.txt', 'User Guide.pdf', 'cover.png']);
+      expect(
+        await File(
+          '${result.outputFolders.single}/_CONVERSION_REPORT.md',
+        ).readAsString(),
+        contains('## Source documentation'),
+      );
+    });
+
+    test('copies archive source docs without macOS junk', () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'decent_converter_archive_docs_test_',
+      );
+      addTearDown(() async {
+        if (await tempDir.exists()) await tempDir.delete(recursive: true);
+      });
+
+      final archive = Archive()
+        ..addFile(
+          ArchiveFile(
+            'Presets/Archive.dspreset',
+            _singleSamplePreset.length,
+            _singleSamplePreset.codeUnits,
+          ),
+        )
+        ..addFile(ArchiveFile('Presets/Samples/C4.wav', 4, _dummyWav))
+        ..addFile(ArchiveFile('LICENSE.txt', 7, 'license'.codeUnits))
+        ..addFile(ArchiveFile('Presets/Info/readme.md', 6, 'readme'.codeUnits))
+        ..addFile(ArchiveFile('__MACOSX/._LICENSE.txt', 4, 'junk'.codeUnits));
+
+      final source = File('${tempDir.path}/Archive.dslibrary');
+      await source.writeAsBytes(ZipEncoder().encode(archive), flush: true);
+
+      final result = await DecentSamplerConverter().convert(
+        sourcePath: source.path,
+        outputParentPath: '${tempDir.path}/out',
+      );
+
+      expect(result.copiedFiles, 1);
+      expect(result.copiedDocumentationFiles, 2);
+      final docsDir = Directory('${result.outputFolders.single}/_source_docs');
+      final copiedDocs =
+          await docsDir
+                .list()
+                .where((entity) => entity is File)
+                .map((entity) => entity.uri.pathSegments.last)
+                .toList()
+            ..sort();
+
+      expect(copiedDocs, ['LICENSE.txt', 'readme.md']);
+    });
+
+    test('can skip source docs when requested', () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'decent_converter_skip_docs_test_',
+      );
+      addTearDown(() async {
+        if (await tempDir.exists()) await tempDir.delete(recursive: true);
+      });
+
+      final libraryDir = Directory('${tempDir.path}/No Docs Output');
+      await libraryDir.create(recursive: true);
+      await _writeDummyWavs(libraryDir, ['Samples/C4.wav']);
+      await File('${libraryDir.path}/No Docs Output.dspreset').writeAsString('''
+<DecentSampler>
+  <groups>
+    <group>
+      <sample path="Samples/C4.wav" rootNote="C4"/>
+    </group>
+  </groups>
+</DecentSampler>
+''');
+      await File('${libraryDir.path}/LICENSE.txt').writeAsString('license');
+
+      final result = await DecentSamplerConverter().convert(
+        sourcePath: libraryDir.path,
+        outputParentPath: '${tempDir.path}/out',
+        options: const DecentSamplerConvertOptions(includeSourceDocs: false),
+      );
+
+      expect(result.copiedFiles, 1);
+      expect(result.copiedDocumentationFiles, 0);
+      expect(
+        await Directory('${result.outputFolders.single}/_source_docs').exists(),
+        isFalse,
+      );
+    });
+
     test('analyzes every preset in extracted Decent folders', () async {
       final tempDir = await Directory.systemTemp.createTemp(
         'decent_converter_multi_preset_analysis_test_',
