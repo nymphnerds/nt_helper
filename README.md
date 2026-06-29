@@ -19,6 +19,7 @@ This fork/branch contains an experimental Windows test build for a new Poly Mult
   - `Add unmapped` keeps files unassigned for manual mapping;
   - `Spread across keys` maps selected files one-per-key from a chosen start note;
   - `Stack as round robins` maps selected files onto one root/low note and velocity layer as RR1, RR2, RR3, etc.
+- Adds preview/audition controls to the WAV selection dialog so loose WAVs and selected Decent-source WAVs can be heard before staging them.
 - Removes the old GM drum auto-guessing path from this picker to keep loose-WAV imports predictable.
 - Keeps Decent group selection and individual WAV selection available without extracting the whole `.dslibrary`/`.zip` first.
 

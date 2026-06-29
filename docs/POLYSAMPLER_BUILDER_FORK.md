@@ -1,4 +1,4 @@
-# Custom Multisample Mode Handoff
+# Polysampler Builder Fork
 
 This branch adds a `Samples` workspace for building and editing Disting NT Poly Multisample folders. The goal is a practical, staged workflow for making clean `/samples/<instrument>` folders from local WAVs, mounted SD folders, and Decent Sampler sources.
 
@@ -11,6 +11,7 @@ This branch adds a `Samples` workspace for building and editing Disting NT Poly 
 - Copies sources on save; originals are not modified by custom mode.
 - Outputs WAV files only.
 - Optionally copies likely license/readme/manual/info/artwork files into `_source_docs`.
+- Lets users preview/audition candidate WAVs before adding them from loose-file selections or Decent Sampler sources.
 
 Waveform display, audio preview, loop metadata edits, and destructive WAV edits are local/mounted-folder features only. Direct NT SD file browsing remains available, but direct WAV preview/download over MIDI/SysEx is intentionally disabled because full-file transfer is too slow and unreliable for this workflow.
 
@@ -43,6 +44,12 @@ Custom mode is a draft basket for mashup/sample-set creation.
 - `Add files` accepts loose WAVs plus Decent `.dslibrary`, `.zip`, and `.dspreset` sources.
 - `Add folder` accepts folders containing WAVs or extracted Decent content.
 - Decent sources show selectable groups and individual WAVs, without extracting the whole archive first.
+- Candidate WAVs can be auditioned in the selection dialog before staging them.
+- Selected WAVs can be staged with a compact mapping choice:
+  - `Use source / filename mapping`: use Decent XML first, or C3/_V2/_RR3-style filename tags for loose WAVs.
+  - `Add unmapped`: add files with no root note for manual mapping.
+  - `Spread across keys`: map selected files one-per-key from a chosen start note.
+  - `Stack as round robins`: map selected files onto one root/low note and velocity layer as RR1, RR2, RR3, etc.
 - Multi-select removal only removes items from the draft; it does not delete source files.
 - `Save as` chooses an output folder.
 - `Save` reuses the remembered custom output folder.
