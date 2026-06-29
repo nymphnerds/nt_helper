@@ -69,7 +69,11 @@ import 'package:nt_helper/models/app_release.dart';
 import 'package:nt_helper/services/app_update_service.dart';
 import 'package:nt_helper/utils/build_config.dart';
 
-enum EditMode { parameters, routing, sampleBuilder, both }
+enum EditMode { parameters, routing, both }
+
+enum WorkspaceMode { routing, samples }
+
+enum EditPane { parameters, routing, samples }
 
 /// Help text for algorithm name interactions
 const String _algorithmNameHelpText =
@@ -115,11 +119,11 @@ class _SynchronizedScreenState extends State<SynchronizedScreen>
   late int _selectedIndex;
   late TabController _tabController;
   EditMode _currentMode = EditMode.parameters;
+  WorkspaceMode _workspaceMode = WorkspaceMode.routing;
   double _splitDividerPosition = SettingsService.defaultSplitDividerPosition;
   bool _showDebugPanel = true;
   bool _showContextualHelp = true;
   bool _showParameterSpreadsheet = false;
-  bool _showSampleParameterPanel = false;
   String? _contextualHelpText;
   AppRelease? _availableAppUpdate;
   AppUpdateService? _appUpdateService;
@@ -136,14 +140,6 @@ class _SynchronizedScreenState extends State<SynchronizedScreen>
 
   Widget _buildSampleBuilder() {
     return _cachedSampleBuilder;
-  }
-
-  int _workspaceIndex(EditMode mode) {
-    return switch (mode) {
-      EditMode.routing => 1,
-      EditMode.sampleBuilder => 2,
-      EditMode.parameters || EditMode.both => 0,
-    };
   }
 
   StreamSubscription<RoutingEditorState>? _routingFocusSub;
@@ -434,9 +430,74 @@ class _SynchronizedScreenState extends State<SynchronizedScreen>
     _isSyncingSelection = false;
   }
 
+  double _availableMainContentWidth(double screenWidth) {
+    if (!_showChatPanel) return screenWidth;
+    final maxChatWidth = (screenWidth * 0.5).clamp(280.0, 800.0).toDouble();
+    final chatWidth = _chatPanelWidth.clamp(280.0, maxChatWidth).toDouble();
+    return (screenWidth - chatWidth - 4.0).clamp(0.0, screenWidth).toDouble();
+  }
+
+  Set<EditPane> _selectedPanes() {
+    final panes = <EditPane>{};
+    if (_currentMode == EditMode.parameters || _currentMode == EditMode.both) {
+      panes.add(EditPane.parameters);
+    }
+    if (_currentMode == EditMode.routing || _currentMode == EditMode.both) {
+      panes.add(
+        _workspaceMode == WorkspaceMode.samples
+            ? EditPane.samples
+            : EditPane.routing,
+      );
+    }
+    return panes;
+  }
+
+  void _handlePaneSelection(Set<EditPane> panes, double contentWidth) {
+    if (panes.isEmpty) return;
+
+    final previous = _selectedPanes();
+    final added = panes.difference(previous);
+    final choseSamples =
+        added.contains(EditPane.samples) ||
+        (panes.contains(EditPane.samples) && !panes.contains(EditPane.routing));
+    final choseRouting =
+        added.contains(EditPane.routing) ||
+        (panes.contains(EditPane.routing) && !panes.contains(EditPane.samples));
+
+    if (choseSamples) {
+      _workspaceMode = WorkspaceMode.samples;
+    } else if (choseRouting) {
+      _workspaceMode = WorkspaceMode.routing;
+    }
+
+    final hasParameters = panes.contains(EditPane.parameters);
+    final hasWorkspace =
+        panes.contains(EditPane.routing) || panes.contains(EditPane.samples);
+
+    if (hasParameters && hasWorkspace) {
+      _currentMode = _canShowSplitScreen(contentWidth)
+          ? EditMode.both
+          : (added.contains(EditPane.parameters)
+                ? EditMode.parameters
+                : EditMode.routing);
+    } else if (hasParameters) {
+      _currentMode = EditMode.parameters;
+    } else if (hasWorkspace) {
+      _currentMode = EditMode.routing;
+    }
+  }
+
+  Widget _buildWorkspace(RoutingEditorViewMode effectiveRoutingViewMode) {
+    return _workspaceMode == WorkspaceMode.samples
+        ? _buildSampleBuilder()
+        : _buildKeyedRoutingCanvas(effectiveRoutingViewMode);
+  }
+
   @override
   Widget build(BuildContext context) {
-    bool isWideScreen = MediaQuery.of(context).size.width > 900;
+    final screenWidth = MediaQuery.of(context).size.width;
+    final contentWidth = _availableMainContentWidth(screenWidth);
+    bool isWideScreen = contentWidth > 900;
     final effectiveRoutingViewMode = MediaQuery.of(context).accessibleNavigation
         ? RoutingEditorViewMode.list
         : _routingViewMode;
@@ -450,10 +511,8 @@ class _SynchronizedScreenState extends State<SynchronizedScreen>
 
     Widget scaffold;
 
-    // Fall back to single mode if split-screen conditions aren't met
-    final screenWidth = MediaQuery.of(context).size.width;
-    if (_currentMode == EditMode.both && !_canShowSplitScreen(screenWidth)) {
-      _currentMode = EditMode.parameters;
+    if (_currentMode == EditMode.both && !_canShowSplitScreen(contentWidth)) {
+      _currentMode = EditMode.routing;
     }
 
     // Use a conditional widget based on screen width
@@ -468,11 +527,10 @@ class _SynchronizedScreenState extends State<SynchronizedScreen>
               child: _currentMode == EditMode.both
                   ? _buildSplitView()
                   : IndexedStack(
-                      index: _workspaceIndex(_currentMode),
+                      index: _currentMode == EditMode.parameters ? 0 : 1,
                       children: [
                         _buildWideScreenBody(),
-                        _buildKeyedRoutingCanvas(effectiveRoutingViewMode),
-                        _buildSampleBuilderWorkspace(),
+                        _buildWorkspace(effectiveRoutingViewMode),
                       ],
                     ),
             ),
@@ -511,11 +569,10 @@ class _SynchronizedScreenState extends State<SynchronizedScreen>
           children: [
             Expanded(
               child: IndexedStack(
-                index: _workspaceIndex(_currentMode),
+                index: _currentMode == EditMode.parameters ? 0 : 1,
                 children: [
                   _buildBody(),
-                  _buildKeyedRoutingCanvas(effectiveRoutingViewMode),
-                  _buildSampleBuilderWorkspace(),
+                  _buildWorkspace(effectiveRoutingViewMode),
                 ],
               ),
             ),
@@ -584,7 +641,10 @@ class _SynchronizedScreenState extends State<SynchronizedScreen>
             );
           },
           onSwitchToRouting: () {
-            setState(() => _currentMode = EditMode.routing);
+            setState(() {
+              _workspaceMode = WorkspaceMode.routing;
+              _currentMode = EditMode.routing;
+            });
             SemanticsService.sendAnnouncement(
               View.of(context),
               'Switched to Routing mode',
@@ -592,8 +652,10 @@ class _SynchronizedScreenState extends State<SynchronizedScreen>
             );
           },
           onSwitchToBoth: () {
-            final screenWidth = MediaQuery.of(context).size.width;
-            if (_canShowSplitScreen(screenWidth)) {
+            final contentWidth = _availableMainContentWidth(
+              MediaQuery.of(context).size.width,
+            );
+            if (_canShowSplitScreen(contentWidth)) {
               setState(() => _currentMode = EditMode.both);
               SemanticsService.sendAnnouncement(
                 View.of(context),
@@ -901,7 +963,7 @@ class _SynchronizedScreenState extends State<SynchronizedScreen>
             ),
             Expanded(
               flex: rightFlex,
-              child: _buildKeyedRoutingCanvas(effectiveRoutingViewMode),
+              child: _buildWorkspace(effectiveRoutingViewMode),
             ),
           ],
         );
@@ -1002,31 +1064,6 @@ class _SynchronizedScreenState extends State<SynchronizedScreen>
                 ),
         ),
       ],
-    );
-  }
-
-  Widget _buildSampleBuilderWorkspace() {
-    final canShowParameters =
-        !_platformService.isMobilePlatform() &&
-        MediaQuery.of(context).size.width >= 1008 &&
-        widget.slots.isNotEmpty;
-    if (!_showSampleParameterPanel || !canShowParameters) {
-      return _buildSampleBuilder();
-    }
-
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final parameterWidth = (constraints.maxWidth * 0.38)
-            .clamp(520.0, 720.0)
-            .toDouble();
-        return Row(
-          children: [
-            SizedBox(width: parameterWidth, child: _buildWideScreenBody()),
-            VerticalDivider(width: 1, color: Theme.of(context).dividerColor),
-            Expanded(child: _buildSampleBuilder()),
-          ],
-        );
-      },
     );
   }
 
@@ -1485,27 +1522,28 @@ class _SynchronizedScreenState extends State<SynchronizedScreen>
 
   BottomAppBar _buildBottomAppBar() {
     final screenWidth = MediaQuery.of(context).size.width;
-    bool isWideScreen = screenWidth > 900;
+    final contentWidth = _availableMainContentWidth(screenWidth);
+    bool isWideScreen = contentWidth > 900;
     bool isMobile = _platformService.isMobilePlatform();
 
     return BottomAppBar(
       child: Row(
         children: [
-          // Left side - Mode switcher
+          // Left side - pane switcher
           Padding(
             padding: const EdgeInsets.only(left: 16),
-            child: SegmentedButton<EditMode>(
-              multiSelectionEnabled: false,
+            child: SegmentedButton<EditPane>(
+              multiSelectionEnabled: true,
               emptySelectionAllowed: false,
               segments: [
                 ButtonSegment(
-                  value: EditMode.parameters,
+                  value: EditPane.parameters,
                   label: isWideScreen ? const Text('Parameters') : null,
                   icon: const Icon(Icons.tune, semanticLabel: 'Parameters'),
                   tooltip: 'Parameters mode',
                 ),
                 ButtonSegment(
-                  value: EditMode.routing,
+                  value: EditPane.routing,
                   label: isWideScreen ? const Text('Routing') : null,
                   icon: const Icon(
                     Icons.account_tree,
@@ -1514,7 +1552,7 @@ class _SynchronizedScreenState extends State<SynchronizedScreen>
                   tooltip: 'Routing mode',
                 ),
                 ButtonSegment(
-                  value: EditMode.sampleBuilder,
+                  value: EditPane.samples,
                   label: isWideScreen ? const Text('Samples') : null,
                   icon: const Icon(
                     Icons.audio_file,
@@ -1523,16 +1561,10 @@ class _SynchronizedScreenState extends State<SynchronizedScreen>
                   tooltip: 'Sample Builder',
                 ),
               ],
-              selected: {
-                _currentMode == EditMode.both ? EditMode.routing : _currentMode,
-              },
-              onSelectionChanged: (Set<EditMode> modes) {
-                final selectedMode = modes.first;
+              selected: _selectedPanes(),
+              onSelectionChanged: (Set<EditPane> panes) {
                 setState(() {
-                  _currentMode = selectedMode;
-                  if (selectedMode != EditMode.sampleBuilder) {
-                    _showSampleParameterPanel = false;
-                  }
+                  _handlePaneSelection(panes, contentWidth);
                 });
               },
               style: const ButtonStyle(
@@ -1864,7 +1896,6 @@ class _SynchronizedScreenState extends State<SynchronizedScreen>
       children: switch (_currentMode) {
         EditMode.parameters => _buildParameterModeActions(cubit),
         EditMode.routing => _buildRoutingModeActions(),
-        EditMode.sampleBuilder => _buildSampleBuilderModeActions(),
         EditMode.both => [
           ..._buildParameterModeActions(cubit),
           ..._buildRoutingModeActions(),
@@ -1964,33 +1995,6 @@ class _SynchronizedScreenState extends State<SynchronizedScreen>
   List<Widget> _buildRoutingModeActions() {
     return [
       // Placeholder for future routing actions
-    ];
-  }
-
-  List<Widget> _buildSampleBuilderModeActions() {
-    final canShowParameters =
-        !_platformService.isMobilePlatform() &&
-        MediaQuery.of(context).size.width >= 1008 &&
-        widget.slots.isNotEmpty;
-    return [
-      IconButton(
-        icon: Icon(
-          _showSampleParameterPanel ? Icons.tune : Icons.tune_outlined,
-          semanticLabel: _showSampleParameterPanel
-              ? 'Hide parameters panel'
-              : 'Show parameters panel',
-        ),
-        tooltip: _showSampleParameterPanel
-            ? 'Hide parameters'
-            : 'Show parameters',
-        onPressed: canShowParameters
-            ? () {
-                setState(() {
-                  _showSampleParameterPanel = !_showSampleParameterPanel;
-                });
-              }
-            : null,
-      ),
     ];
   }
 
@@ -2192,7 +2196,12 @@ class _SynchronizedScreenState extends State<SynchronizedScreen>
           PopupMenuItem(
             value: 'sample_builder',
             onTap: () {
-              setState(() => _currentMode = EditMode.sampleBuilder);
+              setState(() {
+                _workspaceMode = WorkspaceMode.samples;
+                if (_currentMode == EditMode.parameters) {
+                  _currentMode = EditMode.routing;
+                }
+              });
             },
             child: const Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,

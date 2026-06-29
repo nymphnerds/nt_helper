@@ -3,10 +3,18 @@
 ## Poly Multisample Builder Test Release Changelog
 
 Branch: `nymph-next-fix`
-Tag: `poly-multisample-builder-test-v3`
-Windows zip: `nt_helper-windows-poly-multisample-builder-test-v3.zip`
+Tag: `poly-multisample-builder-test-v4`
+Windows zip: `nt_helper-windows-poly-multisample-builder-test-v4.zip`
 
 This fork/branch contains an experimental Windows test build for a new Poly Multisample Builder in NT Helper.
+
+### 2026-06-29 Layout Fix
+
+- Restores Thorinside's original `Parameters` + `Routing` multi-toggle behavior.
+- Keeps `Samples` as an alternate workspace like `Routing`, rather than a third exclusive full-page mode.
+- Allows `Parameters + Samples` on wide layouts, matching the way `Parameters + Routing` can be shown together.
+- Uses the remaining main-panel width when the chat panel is open, so the layout falls back predictably instead of getting stuck or sluggish.
+- Keeps the Poly Multisample Builder workspace cached, so switching away and back preserves the current sample folder/loadout.
 
 ### 2026-06-29 Custom Mode Cleanup
 
@@ -55,11 +63,6 @@ This fork/branch contains an experimental Windows test build for a new Poly Mult
 - Pure round-robin groups are kept as round robins and are not promoted to fake velocity/bank layers.
 - Duplicate requested RR slots are repaired by assigning the next free RR number and reporting the decision.
 - Smoke-tested successfully with a real Decent Sampler library in the Windows test build.
-- Fixed unreliable toggling between `Samples` and `Routing`.
-- Changed the bottom `Parameters / Routing / Samples` switcher to single-select so clicking `Routing` always leaves the sample page.
-- Kept the optional sample-side parameter panel on its own toolbar button instead of mixing it into the page switcher.
-- Cached the sample builder workspace so switching to Routing and back keeps the loaded sample folder/loadout.
-- Improves behavior when the chat panel is open, where the previous multi-select page state could feel sluggish or get stuck.
 
 ### 2026-06-27 Test Release
 
