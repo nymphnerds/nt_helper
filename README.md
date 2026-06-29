@@ -3,10 +3,24 @@
 ## Poly Multisample Builder Test Release Changelog
 
 Branch: `nymph-next-fix`
-Tag: `poly-multisample-builder-test-v4`
-Windows zip: `nt_helper-windows-poly-multisample-builder-test-v4.zip`
+Tag: `poly-multisample-builder-test-v5`
+Windows zip: `nt_helper-windows-poly-multisample-builder-test-v5.zip`
 
 This fork/branch contains an experimental Windows test build for a new Poly Multisample Builder in NT Helper.
+
+### 2026-06-29 Custom Import Mapping Polish
+
+- Keeps the sample-management toolbar consistent across local, NT SD, and custom-draft sample workspaces.
+- Makes `Add files`, `Add folder`, and `Remove` available outside custom drafts; existing folders can now stage additions/removals and apply them like rename edits.
+- Keeps `Custom` as the empty/mashup draft entry point, while still allowing the same file-management tools after opening an existing sample folder.
+- Updates custom/import wording so it is clear that loose WAVs, folders, and selected WAVs/groups from Decent `.dslibrary`, `.zip`, `.dspreset`, or extracted folders can be collected into one Disting NT multisample folder.
+- Adds a compact WAV-selection mapping choice before staging selected files:
+  - `Use source / filename mapping` uses Decent XML first and falls back to C3/_V2/_RR3-style filename tags;
+  - `Add unmapped` keeps files unassigned for manual mapping;
+  - `Spread across keys` maps selected files one-per-key from a chosen start note;
+  - `Stack as round robins` maps selected files onto one root/low note and velocity layer as RR1, RR2, RR3, etc.
+- Removes the old GM drum auto-guessing path from this picker to keep loose-WAV imports predictable.
+- Keeps Decent group selection and individual WAV selection available without extracting the whole `.dslibrary`/`.zip` first.
 
 ### 2026-06-29 Layout Fix
 

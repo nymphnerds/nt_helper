@@ -36,6 +36,8 @@ enum _PolyMultisampleSourceMode { local, ntSd, custom }
 
 enum _CustomDraftSeed { empty, files, folder }
 
+enum _AddWavMappingMode { preserve, unmapped, spread, roundRobin }
+
 class _PolyMultisampleBuilderScreenState
     extends State<PolyMultisampleBuilderScreen> {
   static const _lastLocalSampleFolderKey =
@@ -335,8 +337,9 @@ class _PolyMultisampleBuilderScreenState
       builder: (context) => AlertDialog(
         title: const Text('Custom multisample'),
         content: const Text(
-          'Collect samples from different sources, choose what to keep, then '
-          'map and save them as a Disting NT multisample folder.',
+          'Collect loose WAVs, folders, or selected WAVs/groups from Decent '
+          'Sampler .dslibrary, .zip, or .dspreset sources, then map and save '
+          'them as a Disting NT multisample folder.',
         ),
         actions: [
           TextButton(
@@ -417,14 +420,23 @@ class _PolyMultisampleBuilderScreenState
     setState(() => _lastCustomSourceFolder = folder);
     unawaited(_savePickerPreference(_lastCustomSourceFolderKey, folder));
     final regions = <PolySampleRegion>[];
+    final wavFiles = <File>[];
     for (final path in paths) {
       final extension = p.extension(path).toLowerCase();
       if (extension == '.wav') {
-        regions.add(_customRegionFromFile(File(path)));
+        wavFiles.add(File(path));
       } else {
         if (!mounted) return regions;
         regions.addAll(await _pickSelectedDecentWavs(context, path));
       }
+    }
+    if (wavFiles.isNotEmpty) {
+      if (!mounted) return regions;
+      final groups = _groupsFromLocalWavs(
+        wavFiles,
+        _commonParentPath(wavFiles),
+      );
+      regions.addAll(await _pickSelectedWavGroups(context, groups));
     }
     return regions;
   }
@@ -692,7 +704,7 @@ class _EmptyBuilderView extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             Text(
-              'Open an existing /samples instrument folder to inspect roots, ranges, velocity layers, and round robins.',
+              'Open an existing /samples instrument folder, or build your own from loose WAVs, folders, and selected Decent Sampler WAVs/groups.',
               style: theme.textTheme.bodyMedium?.copyWith(
                 color: colorScheme.onSurfaceVariant,
               ),
@@ -1587,7 +1599,6 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
   }
 
   Future<void> _addCustomWavs() async {
-    if (!widget.isCustomDraft) return;
     final result = await FilePicker.pickFiles(
       dialogTitle: 'Add WAVs or Decent Sampler sources',
       type: FileType.custom,
@@ -1601,21 +1612,29 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
     final paths = result?.files.map((file) => file.path).nonNulls.toList();
     if (paths == null || paths.isEmpty) return;
     final regions = <PolySampleRegion>[];
+    final wavFiles = <File>[];
     for (final path in paths) {
       final extension = p.extension(path).toLowerCase();
       if (extension == '.wav') {
-        regions.add(_customRegionFromFile(File(path)));
+        wavFiles.add(File(path));
       } else {
         if (!mounted) return;
         regions.addAll(await _pickSelectedDecentWavs(context, path));
       }
+    }
+    if (wavFiles.isNotEmpty) {
+      if (!mounted) return;
+      final groups = _groupsFromLocalWavs(
+        wavFiles,
+        _commonParentPath(wavFiles),
+      );
+      regions.addAll(await _pickSelectedWavGroups(context, groups));
     }
     unawaited(_saveCustomSourceFolder(paths.first));
     _addCustomRegions(regions);
   }
 
   Future<void> _addCustomFolder() async {
-    if (!widget.isCustomDraft) return;
     final path = await FilePicker.getDirectoryPath(
       dialogTitle: 'Add source folder',
       initialDirectory:
@@ -1645,7 +1664,9 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
     setState(() {
       _regions.addAll(additions);
       PolyMultisampleFolderReader.sortRegions(_regions);
-      _baselineRegions = List<PolySampleRegion>.of(_regions);
+      if (widget.isCustomDraft) {
+        _baselineRegions = List<PolySampleRegion>.of(_regions);
+      }
       _mapLanes = _sortedSampleLanes(_regions);
       _mapMinMidi = _initialMapMinMidi(_regions);
       _mapMaxMidi = _initialMapMaxMidi(_regions, _mapMinMidi);
@@ -1662,8 +1683,7 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
     }
   }
 
-  void _removeSelectedCustomRegion() {
-    if (!widget.isCustomDraft) return;
+  void _removeSelectedRegions() {
     final targets = _selectedPaths.isEmpty
         ? {_selectedPath}.whereType<String>().toSet()
         : Set<String>.of(_selectedPaths);
@@ -1674,7 +1694,9 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
     if (firstIndex < 0) return;
     setState(() {
       _regions.removeWhere((region) => targets.contains(region.path));
-      _baselineRegions = List<PolySampleRegion>.of(_regions);
+      if (widget.isCustomDraft) {
+        _baselineRegions = List<PolySampleRegion>.of(_regions);
+      }
       for (final path in targets) {
         _waveformCache.remove(path);
         _waveformFutures.remove(path);
@@ -1702,6 +1724,17 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
     final selected = _selectedRegion;
     if (selected != null) {
       widget.onSelectRegion(selected);
+    }
+    if (!widget.isCustomDraft && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            targets.length == 1
+                ? 'Marked 1 sample for removal. Apply to delete it.'
+                : 'Marked ${targets.length} samples for removal. Apply to delete them.',
+          ),
+        ),
+      );
     }
   }
 
@@ -2347,6 +2380,10 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
 
   bool get _hasDraftChanges {
     if (widget.isCustomDraft) return false;
+    final currentPaths = {for (final region in _regions) region.path};
+    if (_baselineRegions.any((region) => !currentPaths.contains(region.path))) {
+      return true;
+    }
     final original = {
       for (final region in _baselineRegions) region.path: region,
     };
@@ -2367,29 +2404,46 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
     if (_applying || !_hasDraftChanges) return;
     setState(() => _applying = true);
     try {
+      final removals = _buildRemovePlan(_baselineRegions, _regions);
+      final additions = _buildAddPlan(
+        _baselineRegions,
+        _regions,
+        widget.instrument.sourcePath,
+      );
       final changes = _buildRenamePlan(_baselineRegions, _regions);
-      if (changes.isEmpty) {
+      if (changes.isEmpty && removals.isEmpty && additions.isEmpty) {
         setState(() => _baselineRegions = List<PolySampleRegion>.of(_regions));
         return;
       }
 
-      final hasNtPath = changes.values.any(
-        (change) => _isNtSdPath(change.source.path),
-      );
+      final hasNtPath =
+          changes.values.any((change) => _isNtSdPath(change.source.path)) ||
+          removals.any((region) => _isNtSdPath(region.path)) ||
+          additions.values.any((change) => _isNtSdPath(change.targetPath));
       if (hasNtPath) {
         final manager = context.read<DistingCubit>().disting();
         if (manager == null) {
           throw Exception('Connect to Disting NT before applying SD changes.');
         }
+        await _applyNtDeletes(manager, removals);
         await _applyNtRenames(manager, changes.values.toList());
+        await _applyNtAdds(manager, additions);
       } else {
+        await _applyLocalDeletes(removals);
         await _applyLocalRenames(changes.values.toList());
+        await _applyLocalAdds(additions);
       }
 
       final updatedRegions = _regions
-          .map((region) => changes[region.path]?.updated ?? region)
+          .map(
+            (region) =>
+                changes[region.path]?.updated ??
+                additions[region.path]?.updated ??
+                region,
+          )
           .toList();
       final selectedPath = _selectedPath;
+      final currentPaths = {for (final region in updatedRegions) region.path};
       for (final change in changes.values) {
         if (_waveformCache.containsKey(change.source.path)) {
           _waveformCache[change.updated.path] = _waveformCache.remove(
@@ -2427,19 +2481,25 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
         _baselineRegions = List<PolySampleRegion>.of(updatedRegions);
         _mapLanes = _sortedSampleLanes(_regions);
         _mapRevision++;
-        _selectedPath = selectedPath == null
-            ? null
+        _selectedPath =
+            selectedPath == null || !currentPaths.contains(selectedPath)
+            ? (_regions.isEmpty ? null : _regions.first.path)
             : changes[selectedPath]?.updated.path ?? selectedPath;
-        _playingPath = _playingPath == null
+        _selectedPaths = _selectedPath == null ? {} : {_selectedPath!};
+        _playingPath =
+            _playingPath == null || !currentPaths.contains(_playingPath)
             ? null
             : changes[_playingPath]?.updated.path ?? _playingPath;
       });
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Applied ${changes.length} sample rename(s).'),
-          ),
-        );
+        final summary = <String>[
+          if (changes.isNotEmpty) '${changes.length} rename(s)',
+          if (additions.isNotEmpty) '${additions.length} addition(s)',
+          if (removals.isNotEmpty) '${removals.length} removal(s)',
+        ].join(' and ');
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Applied $summary.')));
       }
     } catch (e) {
       if (mounted) {
@@ -2514,31 +2574,19 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
                 const SizedBox(width: 12),
                 _DraftStatusChip(dirty: _hasDraftChanges),
                 const SizedBox(width: 8),
+                OutlinedButton.icon(
+                  onPressed: _addCustomWavs,
+                  icon: const Icon(Icons.audio_file, size: 18),
+                  label: const Text('Add files'),
+                ),
+                const SizedBox(width: 8),
+                OutlinedButton.icon(
+                  onPressed: _addCustomFolder,
+                  icon: const Icon(Icons.folder_open, size: 18),
+                  label: const Text('Add folder'),
+                ),
+                const SizedBox(width: 8),
                 if (widget.isCustomDraft) ...[
-                  OutlinedButton.icon(
-                    onPressed: _addCustomWavs,
-                    icon: const Icon(Icons.audio_file, size: 18),
-                    label: const Text('Add files'),
-                  ),
-                  const SizedBox(width: 8),
-                  OutlinedButton.icon(
-                    onPressed: _addCustomFolder,
-                    icon: const Icon(Icons.folder_open, size: 18),
-                    label: const Text('Add folder'),
-                  ),
-                  const SizedBox(width: 8),
-                  OutlinedButton.icon(
-                    onPressed: _selectedPaths.isEmpty
-                        ? null
-                        : _removeSelectedCustomRegion,
-                    icon: const Icon(Icons.remove_circle_outline, size: 18),
-                    label: Text(
-                      _selectedPaths.length > 1
-                          ? 'Remove ${_selectedPaths.length}'
-                          : 'Remove',
-                    ),
-                  ),
-                  const SizedBox(width: 8),
                   OutlinedButton.icon(
                     onPressed: _regions.isEmpty || _applying
                         ? null
@@ -2559,6 +2607,18 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
                   ),
                   const SizedBox(width: 8),
                 ],
+                OutlinedButton.icon(
+                  onPressed: _selectedPaths.isEmpty || _regions.isEmpty
+                      ? null
+                      : _removeSelectedRegions,
+                  icon: const Icon(Icons.remove_circle_outline, size: 18),
+                  label: Text(
+                    _selectedPaths.length > 1
+                        ? 'Remove ${_selectedPaths.length}'
+                        : 'Remove',
+                  ),
+                ),
+                const SizedBox(width: 8),
                 FilterChip(
                   avatar: const Icon(Icons.volume_up, size: 16),
                   label: const Text('Auto preview'),
@@ -2703,11 +2763,34 @@ bool _isIgnoredSampleSidecar(String name) {
   return name == '.DS_Store' || name.startsWith('._');
 }
 
+int _naturalCompare(String a, String b) {
+  final chunks = RegExp(r'\d+|\D+');
+  final aParts = chunks.allMatches(a.toLowerCase()).map((m) => m[0]!).toList();
+  final bParts = chunks.allMatches(b.toLowerCase()).map((m) => m[0]!).toList();
+  final count = math.min(aParts.length, bParts.length);
+  for (var i = 0; i < count; i++) {
+    final aNumber = int.tryParse(aParts[i]);
+    final bNumber = int.tryParse(bParts[i]);
+    final result = aNumber != null && bNumber != null
+        ? aNumber.compareTo(bNumber)
+        : aParts[i].compareTo(bParts[i]);
+    if (result != 0) return result;
+  }
+  return aParts.length.compareTo(bParts.length);
+}
+
 Future<List<PolySampleRegion>> _pickSelectedDecentWavs(
   BuildContext context,
   String sourcePath,
 ) async {
   final groups = await _decentWavGroups(sourcePath);
+  return _pickSelectedWavGroups(context, groups);
+}
+
+Future<List<PolySampleRegion>> _pickSelectedWavGroups(
+  BuildContext context,
+  List<_DecentWavGroup> groups,
+) async {
   final candidates = groups.expand((group) => group.candidates).toList();
   if (!context.mounted || candidates.isEmpty) {
     if (context.mounted) {
@@ -2717,21 +2800,49 @@ Future<List<PolySampleRegion>> _pickSelectedDecentWavs(
     }
     return const [];
   }
-  final selected = await showDialog<Set<_DecentWavCandidate>>(
+  final result = await showDialog<_DecentWavSelectionResult>(
     context: context,
     builder: (context) => _DecentWavSelectionDialog(groups: groups),
   );
-  if (selected == null || selected.isEmpty) return const [];
+  if (result == null || result.selected.isEmpty) return const [];
 
   final regions = <PolySampleRegion>[];
-  for (final candidate
-      in selected.toList()..sort(
-        (a, b) => a.label.toLowerCase().compareTo(b.label.toLowerCase()),
-      )) {
+  final sorted = result.selected.toList()
+    ..sort((a, b) => _naturalCompare(a.label, b.label));
+  for (var index = 0; index < sorted.length; index++) {
+    final candidate = sorted[index];
     final file = await candidate.materialize();
-    regions.add(candidate.toRegion(file));
+    regions.add(
+      candidate.toRegion(
+        file,
+        mappingMode: result.mappingMode,
+        spreadRootMidi: (result.spreadStartMidi + index).clamp(0, 127).toInt(),
+        stackRootMidi: result.stackRootMidi,
+        stackLowMidi: result.stackLowMidi,
+        stackVelocityLayer: result.stackVelocityLayer,
+        stackRoundRobin: index + 1,
+      ),
+    );
   }
   return regions;
+}
+
+String _commonParentPath(List<File> files) {
+  if (files.isEmpty) return '.';
+  final dirs = files.map((file) => p.dirname(file.path)).toList();
+  var common = p.split(dirs.first);
+  for (final dir in dirs.skip(1)) {
+    final parts = p.split(dir);
+    var length = 0;
+    while (length < common.length &&
+        length < parts.length &&
+        common[length].toLowerCase() == parts[length].toLowerCase()) {
+      length++;
+    }
+    common = common.take(length).toList();
+    if (common.isEmpty) return p.dirname(files.first.path);
+  }
+  return common.isEmpty ? p.dirname(files.first.path) : p.joinAll(common);
 }
 
 Future<List<_DecentWavGroup>> _decentWavGroups(String sourcePath) async {
@@ -2980,30 +3091,15 @@ List<_DecentSampleMapping> _decentSampleMappings(
   final velocityLayerByRange = {
     for (var i = 0; i < velocityRanges.length; i++) velocityRanges[i]: i + 1,
   };
-  final usedRoundRobins = <String, Set<int>>{};
-
   return raw.map((mapping) {
     final velocityKey =
         '${mapping.velocityLow ?? 1}-${mapping.velocityHigh ?? 127}';
     final velocityLayer = velocityLayerByRange[velocityKey] ?? 1;
-    final root = mapping.rootMidi;
-    final switchPoint = mapping.switchPoint ?? root;
-    final rrKey = '$root|$switchPoint|$velocityLayer';
-    final used = usedRoundRobins.putIfAbsent(rrKey, () => <int>{});
     final requestedRoundRobin = mapping.seqPosition;
-    late final int assignedRoundRobin;
-    if (requestedRoundRobin != null &&
-        requestedRoundRobin > 0 &&
-        !used.contains(requestedRoundRobin)) {
-      assignedRoundRobin = requestedRoundRobin;
-    } else {
-      var nextRoundRobin = 1;
-      while (used.contains(nextRoundRobin)) {
-        nextRoundRobin++;
-      }
-      assignedRoundRobin = nextRoundRobin;
-    }
-    used.add(assignedRoundRobin);
+    final assignedRoundRobin =
+        requestedRoundRobin != null && requestedRoundRobin > 0
+        ? requestedRoundRobin
+        : 1;
     return mapping.copyWith(
       velocityLayer: velocityLayer,
       roundRobin: assignedRoundRobin,
@@ -3052,7 +3148,21 @@ String _groupDetail(List<_DecentWavCandidate> candidates) {
       .map((candidate) => p.basename(candidate.label))
       .join(', ');
   return '${candidates.length} WAV${candidates.length == 1 ? '' : 's'}'
+      '${_roundRobinDetail(candidates)}'
       '${examples.isEmpty ? '' : ' · e.g. $examples'}';
+}
+
+String _roundRobinDetail(List<_DecentWavCandidate> candidates) {
+  final rrValues = candidates
+      .map((candidate) => candidate.mapping.seqPosition)
+      .whereType<int>()
+      .toList();
+  if (rrValues.isEmpty) return '';
+  rrValues.sort();
+  final first = rrValues.first;
+  final last = rrValues.last;
+  final summary = first == last ? 'RR $first' : 'RR $first-$last';
+  return ' · $summary from Decent seqPosition';
 }
 
 Map<String, String> _decentAttrs(html_dom.Element element) {
@@ -3149,6 +3259,53 @@ PolySampleRegion _customRegionFromFile(
   );
 }
 
+PolySampleRegion _mappedRegionFromFile(
+  File file, {
+  required String displayName,
+  required int rootMidi,
+  int? switchPoint,
+  int velocityLayer = 1,
+  int roundRobin = 1,
+  int? loopStart,
+  int? loopEnd,
+}) {
+  final region = PolySampleRegion(
+    path: file.path,
+    fileName: p.basename(file.path),
+    displayName: displayName,
+    rootMidi: rootMidi,
+    rootName: PolyMultisampleParser.midiToNoteName(rootMidi),
+    switchPoint: switchPoint ?? rootMidi,
+    velocityLayer: velocityLayer,
+    roundRobin: roundRobin,
+    loopStart: loopStart,
+    loopEnd: loopEnd,
+  );
+  return region.copyWithIssues(region.currentIssues);
+}
+
+PolySampleRegion _detectedRegionFromFile(
+  File file, {
+  required String displayName,
+  _DecentSampleMapping mapping = const _DecentSampleMapping(),
+}) {
+  final detected = PolyMultisampleParser.parsePath(displayName);
+  final root = detected.rootMidi;
+  if (root == null) {
+    return _customRegionFromFile(file, displayName: displayName);
+  }
+  return _mappedRegionFromFile(
+    file,
+    displayName: displayName,
+    rootMidi: root,
+    switchPoint: detected.switchPoint ?? mapping.switchPoint ?? root,
+    velocityLayer: detected.velocityLayer ?? mapping.velocityLayer ?? 1,
+    roundRobin: detected.roundRobin ?? mapping.roundRobin ?? 1,
+    loopStart: mapping.loopStart,
+    loopEnd: mapping.loopEnd,
+  );
+}
+
 abstract class _DecentWavCandidate {
   const _DecentWavCandidate({
     required this.label,
@@ -3162,7 +3319,53 @@ abstract class _DecentWavCandidate {
 
   Future<File> materialize();
 
-  PolySampleRegion toRegion(File file) {
+  PolySampleRegion toRegion(
+    File file, {
+    _AddWavMappingMode mappingMode = _AddWavMappingMode.preserve,
+    int? spreadRootMidi,
+    int? stackRootMidi,
+    int? stackLowMidi,
+    int? stackVelocityLayer,
+    int? stackRoundRobin,
+  }) {
+    switch (mappingMode) {
+      case _AddWavMappingMode.preserve:
+        final source = _sourceMappedRegion(file);
+        if (source.rootMidi != null) return source;
+        return _detectedRegionFromFile(file, displayName: label);
+      case _AddWavMappingMode.unmapped:
+        return _customRegionFromFile(file, displayName: label);
+      case _AddWavMappingMode.spread:
+        final root = spreadRootMidi?.clamp(0, 127).toInt() ?? 36;
+        return _mappedRegionFromFile(
+          file,
+          displayName: label,
+          rootMidi: root,
+          switchPoint: root,
+          velocityLayer: 1,
+          roundRobin: 1,
+          loopStart: mapping.loopStart,
+          loopEnd: mapping.loopEnd,
+        );
+      case _AddWavMappingMode.roundRobin:
+        final root = (stackRootMidi ?? 36).clamp(0, 127).toInt();
+        final low = (stackLowMidi ?? root).clamp(0, 127).toInt();
+        final velocityLayer = (stackVelocityLayer ?? 1).clamp(1, 127).toInt();
+        final roundRobin = (stackRoundRobin ?? 1).clamp(1, 999).toInt();
+        return _mappedRegionFromFile(
+          file,
+          displayName: label,
+          rootMidi: root,
+          switchPoint: low,
+          velocityLayer: velocityLayer,
+          roundRobin: roundRobin,
+          loopStart: mapping.loopStart,
+          loopEnd: mapping.loopEnd,
+        );
+    }
+  }
+
+  PolySampleRegion _sourceMappedRegion(File file) {
     final base = _customRegionFromFile(file, displayName: label);
     final root = mapping.rootMidi;
     final region = base.copyWith(
@@ -3270,6 +3473,24 @@ class _DecentWavGroup {
   final List<_DecentWavCandidate> candidates;
 }
 
+class _DecentWavSelectionResult {
+  const _DecentWavSelectionResult({
+    required this.selected,
+    required this.mappingMode,
+    required this.spreadStartMidi,
+    required this.stackRootMidi,
+    required this.stackLowMidi,
+    required this.stackVelocityLayer,
+  });
+
+  final Set<_DecentWavCandidate> selected;
+  final _AddWavMappingMode mappingMode;
+  final int spreadStartMidi;
+  final int stackRootMidi;
+  final int stackLowMidi;
+  final int stackVelocityLayer;
+}
+
 class _DecentWavSelectionDialog extends StatefulWidget {
   const _DecentWavSelectionDialog({required this.groups});
 
@@ -3282,24 +3503,176 @@ class _DecentWavSelectionDialog extends StatefulWidget {
 
 class _DecentWavSelectionDialogState extends State<_DecentWavSelectionDialog> {
   final Set<_DecentWavCandidate> _selected = {};
+  final AudioPlayer _previewPlayer = AudioPlayer();
+  final Map<_DecentWavCandidate, File> _previewFiles = {};
+  StreamSubscription<void>? _previewCompleteSubscription;
+  _AddWavMappingMode _mappingMode = _AddWavMappingMode.preserve;
+  int _spreadStartMidi = 36;
+  int _stackRootMidi = 36;
+  int _stackLowMidi = 36;
+  int _stackVelocityLayer = 1;
+  _DecentWavCandidate? _previewing;
+  bool _previewBusy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _previewCompleteSubscription = _previewPlayer.onPlayerComplete.listen((_) {
+      if (!mounted) return;
+      setState(() => _previewing = null);
+    });
+  }
+
+  @override
+  void dispose() {
+    _previewCompleteSubscription?.cancel();
+    _previewPlayer.dispose();
+    super.dispose();
+  }
 
   int get _candidateCount =>
       widget.groups.fold(0, (total, group) => total + group.candidates.length);
+
+  String _mappingModeLabel(_AddWavMappingMode mode) {
+    switch (mode) {
+      case _AddWavMappingMode.preserve:
+        return 'Use source / filename mapping';
+      case _AddWavMappingMode.unmapped:
+        return 'Add unmapped';
+      case _AddWavMappingMode.spread:
+        return 'Spread across keys';
+      case _AddWavMappingMode.roundRobin:
+        return 'Stack as round robins';
+    }
+  }
+
+  String _mappingModeHelp(_AddWavMappingMode mode) {
+    switch (mode) {
+      case _AddWavMappingMode.preserve:
+        return 'Use Decent XML first; loose WAVs can still use C3, _V2, or _RR3 filename tags.';
+      case _AddWavMappingMode.unmapped:
+        return 'Add files with no root note so you can map them by hand.';
+      case _AddWavMappingMode.spread:
+        return 'Place selected WAVs one-per-key from the chosen start note.';
+      case _AddWavMappingMode.roundRobin:
+        return 'Put selected WAVs on one root/low note as RR1, RR2, RR3...';
+    }
+  }
+
+  Future<void> _togglePreview(_DecentWavCandidate candidate) async {
+    if (_previewing == candidate) {
+      await _previewPlayer.stop();
+      if (mounted) setState(() => _previewing = null);
+      return;
+    }
+
+    setState(() => _previewBusy = true);
+    try {
+      await _previewPlayer.stop();
+      final file = _previewFiles[candidate] ?? await candidate.materialize();
+      _previewFiles[candidate] = file;
+      await _previewPlayer.setReleaseMode(ReleaseMode.stop);
+      await _previewPlayer.play(DeviceFileSource(file.path), volume: 1.0);
+      if (mounted) setState(() => _previewing = candidate);
+    } finally {
+      if (mounted) setState(() => _previewBusy = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return AlertDialog(
-      title: const Text('Select groups from Decent source'),
+      title: const Text('Select WAVs to add'),
       content: SizedBox(
         width: 720,
-        height: 520,
+        height: 620,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
               '${widget.groups.length} group(s), $_candidateCount WAV file(s). Choose whole groups, or expand for individual WAVs.',
               style: theme.textTheme.bodyMedium,
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<_AddWavMappingMode>(
+              value: _mappingMode,
+              decoration: const InputDecoration(
+                labelText: 'Mapping',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+              items: [
+                for (final mode in _AddWavMappingMode.values)
+                  DropdownMenuItem(
+                    value: mode,
+                    child: Text(_mappingModeLabel(mode)),
+                  ),
+              ],
+              onChanged: (value) {
+                if (value == null) return;
+                setState(() => _mappingMode = value);
+              },
+            ),
+            if (_mappingMode == _AddWavMappingMode.spread) ...[
+              const SizedBox(height: 10),
+              SizedBox(
+                width: 180,
+                child: _SampleNoteStepper(
+                  label: 'Start',
+                  value: _spreadStartMidi,
+                  onChanged: (value) =>
+                      setState(() => _spreadStartMidi = value),
+                ),
+              ),
+            ],
+            if (_mappingMode == _AddWavMappingMode.roundRobin) ...[
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 12,
+                runSpacing: 8,
+                children: [
+                  SizedBox(
+                    width: 170,
+                    child: _SampleNoteStepper(
+                      label: 'Root',
+                      value: _stackRootMidi,
+                      onChanged: (value) {
+                        setState(() {
+                          final lowWasRoot = _stackLowMidi == _stackRootMidi;
+                          _stackRootMidi = value;
+                          if (lowWasRoot) _stackLowMidi = value;
+                        });
+                      },
+                    ),
+                  ),
+                  SizedBox(
+                    width: 170,
+                    child: _SampleNoteStepper(
+                      label: 'Low',
+                      value: _stackLowMidi,
+                      onChanged: (value) =>
+                          setState(() => _stackLowMidi = value),
+                    ),
+                  ),
+                  SizedBox(
+                    width: 170,
+                    child: _SampleNumberStepper(
+                      label: 'Velocity',
+                      value: _stackVelocityLayer,
+                      min: 1,
+                      max: 127,
+                      onChanged: (value) =>
+                          setState(() => _stackVelocityLayer = value),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+            const SizedBox(height: 6),
+            Text(
+              _mappingModeHelp(_mappingMode),
+              style: theme.textTheme.bodySmall,
             ),
             const SizedBox(height: 8),
             Row(
@@ -3372,6 +3745,19 @@ class _DecentWavSelectionDialogState extends State<_DecentWavSelectionDialog> {
                         CheckboxListTile(
                           dense: true,
                           value: _selected.contains(candidate),
+                          secondary: IconButton(
+                            tooltip: _previewing == candidate
+                                ? 'Stop preview'
+                                : 'Preview WAV',
+                            onPressed: _previewBusy
+                                ? null
+                                : () => _togglePreview(candidate),
+                            icon: Icon(
+                              _previewing == candidate
+                                  ? Icons.stop
+                                  : Icons.play_arrow,
+                            ),
+                          ),
                           title: Text(
                             candidate.label,
                             maxLines: 1,
@@ -3401,9 +3787,16 @@ class _DecentWavSelectionDialogState extends State<_DecentWavSelectionDialog> {
         FilledButton(
           onPressed: _selected.isEmpty
               ? null
-              : () => Navigator.of(
-                  context,
-                ).pop(Set<_DecentWavCandidate>.of(_selected)),
+              : () => Navigator.of(context).pop(
+                  _DecentWavSelectionResult(
+                    selected: Set<_DecentWavCandidate>.of(_selected),
+                    mappingMode: _mappingMode,
+                    spreadStartMidi: _spreadStartMidi,
+                    stackRootMidi: _stackRootMidi,
+                    stackLowMidi: _stackLowMidi,
+                    stackVelocityLayer: _stackVelocityLayer,
+                  ),
+                ),
           child: Text('Add ${_selected.length}'),
         ),
       ],
@@ -3423,12 +3816,32 @@ class _RenameChange {
   final String temporaryPath;
 }
 
+class _AddChange {
+  const _AddChange({
+    required this.source,
+    required this.updated,
+    required this.targetPath,
+  });
+
+  final PolySampleRegion source;
+  final PolySampleRegion updated;
+  final String targetPath;
+}
+
+Map<String, String> _buildTargetNameMap(List<PolySampleRegion> regions) {
+  final reservedNames = <String, int>{};
+  return {
+    for (final region in regions)
+      region.path: _targetSampleFileName(region, regions, reservedNames),
+  };
+}
+
 Map<String, _RenameChange> _buildRenamePlan(
   List<PolySampleRegion> baseline,
   List<PolySampleRegion> edited,
 ) {
   final baselineByPath = {for (final region in baseline) region.path: region};
-  final reservedNames = <String, int>{};
+  final targetNames = _buildTargetNameMap(edited);
   final changes = <String, _RenameChange>{};
   final stamp = DateTime.now().microsecondsSinceEpoch;
 
@@ -3437,7 +3850,7 @@ Map<String, _RenameChange> _buildRenamePlan(
     final source = baselineByPath[region.path];
     if (source == null) continue;
     final isNt = _isNtSdPath(source.path);
-    final targetName = _targetSampleFileName(region, edited, reservedNames);
+    final targetName = targetNames[region.path] ?? region.fileName;
     final targetPath = _replaceBasename(source.path, targetName, isNt: isNt);
     if (targetPath == source.path) continue;
     final temporaryPath = _replaceBasename(
@@ -3459,6 +3872,69 @@ Map<String, _RenameChange> _buildRenamePlan(
   return changes;
 }
 
+Map<String, _AddChange> _buildAddPlan(
+  List<PolySampleRegion> baseline,
+  List<PolySampleRegion> edited,
+  String outputFolder,
+) {
+  final baselinePaths = {for (final region in baseline) region.path};
+  final targetNames = _buildTargetNameMap(edited);
+  final isNtOutput = _isNtSdPath(outputFolder);
+  final changes = <String, _AddChange>{};
+  for (final region in edited) {
+    if (baselinePaths.contains(region.path)) continue;
+    final targetName = targetNames[region.path] ?? region.fileName;
+    final targetPath = isNtOutput
+        ? p.posix.join(outputFolder, targetName)
+        : p.join(outputFolder, targetName);
+    changes[region.path] = _AddChange(
+      source: region,
+      updated: region.copyWith(
+        path: targetPath,
+        fileName: targetName,
+        displayName: _replaceDisplayBasename(region.displayName, targetName),
+      ),
+      targetPath: targetPath,
+    );
+  }
+  return changes;
+}
+
+List<PolySampleRegion> _buildRemovePlan(
+  List<PolySampleRegion> baseline,
+  List<PolySampleRegion> edited,
+) {
+  final editedPaths = {for (final region in edited) region.path};
+  return baseline
+      .where((region) => !editedPaths.contains(region.path))
+      .toList();
+}
+
+Future<void> _applyLocalDeletes(List<PolySampleRegion> removals) async {
+  for (final region in removals) {
+    final file = File(region.path);
+    if (await file.exists()) {
+      await file.delete();
+    }
+  }
+}
+
+Future<void> _applyLocalAdds(Map<String, _AddChange> additions) async {
+  for (final change in additions.values) {
+    final source = File(change.source.path);
+    if (!await source.exists()) {
+      throw Exception('Missing source WAV: ${change.source.path}');
+    }
+    if (change.source.path == change.targetPath) continue;
+    final target = File(change.targetPath);
+    if (await target.exists()) {
+      throw Exception('Target already exists: ${change.targetPath}');
+    }
+    await target.parent.create(recursive: true);
+    await source.copy(change.targetPath);
+  }
+}
+
 Future<void> _applyLocalRenames(List<_RenameChange> changes) async {
   final sources = changes.map((change) => change.source.path).toSet();
   for (final change in changes) {
@@ -3472,6 +3948,46 @@ Future<void> _applyLocalRenames(List<_RenameChange> changes) async {
   }
   for (final change in changes) {
     await File(change.temporaryPath).rename(change.updated.path);
+  }
+}
+
+Future<void> _applyNtAdds(
+  IDistingMidiManager manager,
+  Map<String, _AddChange> additions,
+) async {
+  for (final change in additions.values) {
+    final source = File(change.source.path);
+    if (!await source.exists()) {
+      throw Exception('Missing source WAV: ${change.source.path}');
+    }
+    final bytes = await source.readAsBytes();
+    var offset = 0;
+    const chunkSize = 512;
+    while (offset < bytes.length) {
+      final end = math.min(offset + chunkSize, bytes.length);
+      final result = await manager.requestFileUploadChunk(
+        change.targetPath,
+        bytes.sublist(offset, end),
+        offset,
+        createAlways: offset == 0,
+      );
+      if (result != null && !result.success) {
+        throw Exception(result.message);
+      }
+      offset = end;
+    }
+  }
+}
+
+Future<void> _applyNtDeletes(
+  IDistingMidiManager manager,
+  List<PolySampleRegion> removals,
+) async {
+  for (final region in removals) {
+    final result = await manager.requestFileDelete(region.path);
+    if (result != null && !result.success) {
+      throw Exception(result.message);
+    }
   }
 }
 
