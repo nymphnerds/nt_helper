@@ -17,6 +17,13 @@ This fork/branch contains an experimental Windows test build for a new Poly Mult
 - Merged developer `upstream/main` again at `0077f24b`, bringing in v2.42.5+283, the Windows Inno Setup installer workflow, and USB video capture threading hardening.
 - Current fork work now sits on top of those upstream syncs rather than an older developer-main baseline.
 
+### 2026-07-01 Current Windows Build
+
+- Confirmed `upstream/main` had no additional commits after the fifth sync.
+- Ran a fresh Windows release build from the Windows mirror after `flutter clean`.
+- Build output copied to `C:\Users\babyj\nt_helper-build\build\windows\x64\runner\Release`.
+- Fresh executable: `C:\Users\babyj\nt_helper-build\build\windows\x64\runner\Release\nt_helper.exe`.
+
 ### 2026-07-01 Structural Decent Tag Logic
 
 - Decent tag/group rows now describe the actual sample structure found in the XML, not a guessed role from names like `Dry`, `Tape`, `raw`, `mic`, or `noise`.

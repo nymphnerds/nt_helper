@@ -314,10 +314,11 @@ flutter build windows --release
 
 Latest focused verification before this handoff update:
 
-- `flutter test test/poly_multisample/decent_sampler_converter_test.dart`: passed, 18 tests
-- targeted `dart analyze`: passed, no issues
+- `dart analyze` on app release/update, Decent converter, Poly Multisample UI, update dialog, and focused tests: passed, no issues
+- `flutter test test/poly_multisample/decent_sampler_converter_test.dart test/services/app_update_service_test.dart`: passed, 43 tests
 - `git diff --check`: passed
-- `flutter build windows --release`: passed
+- `flutter build windows --release`: passed after `flutter clean` in the Windows mirror
+- Windows release output copied to `C:\Users\babyj\nt_helper-build\build\windows\x64\runner\Release`
 
 ## Failure Modes To Avoid
 
