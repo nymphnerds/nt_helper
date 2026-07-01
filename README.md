@@ -3,10 +3,24 @@
 ## Poly Multisample Builder Test Release Changelog
 
 Branch: `nymph-next-fix`
-Tag: `poly-multisample-builder-test-v5`
-Windows zip: `nt_helper-windows-poly-multisample-builder-test-v5.zip`
+Tag: `poly-multisample-builder-test-v6`
+Windows zip: `nt_helper-windows-poly-multisample-builder-test-v6.zip`
 
 This fork/branch contains an experimental Windows test build for a new Poly Multisample Builder in NT Helper.
+
+### 2026-07-01 Import Workflow Cleanup
+
+- Unifies the builder around one `Import` entry point that stages a single editable Disting NT Poly Multisample folder.
+- Keeps the loose WAV picker as a row-based workflow with preview plus per-row `Root`, `Low`, `Vel`, and `RR` controls.
+- Adds quick loose-WAV seeding for Chromatic, Round robins, and Velocity layers while preserving row-level edits before adding.
+- Makes Decent Sampler sources always open the strategy/options screen after analysis, even when the XML looks simple.
+- Keeps Decent preset selection to one preset per staged folder, matching the one-folder Poly Multisample workflow.
+- Lets Decent imports choose Tags or Groups where useful, then choose `Keep Decent map`, `Chromatic`, `Velocity layers`, `Round robins`, or `Add unmapped`.
+- Shows Decent XML-derived tag/group mapping summaries in the rows and tooltips, including note range, velocity range, RR/seqPosition, and Decent-only layer/control warnings.
+- Adds preview buttons to Decent tag/group rows.
+- Keeps `Keep Decent map` honest: compatible XML Low/Root/Vel/RR/loop data is preserved, while row notes warn when Decent source/mic layers or switching/control behaviour cannot be reproduced directly on Disting.
+- Improves auto-preview and keyboard-map focus after import without clamping the available MIDI range.
+- Adds regression coverage for tag XML summaries, mic/source-layer classification, preview-source paths, forced tag RR behaviour, and Decent RR/velocity interactions.
 
 ### 2026-06-29 Custom Import Mapping Polish
 

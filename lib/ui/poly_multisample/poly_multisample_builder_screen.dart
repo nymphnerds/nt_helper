@@ -30,20 +30,32 @@ class PolyMultisampleBuilderScreen extends StatefulWidget {
       _PolyMultisampleBuilderScreenState();
 }
 
-enum _DecentImportSourceKind { file, folder }
-
 enum _PolyMultisampleSourceMode { local, ntSd, custom }
 
-enum _CustomDraftSeed { empty, files, folder }
+enum _ImportDraftSeed { empty, files, folder }
 
-enum _AddWavMappingMode { preserve, unmapped, spread, roundRobin }
+enum _AddWavMappingMode { preserve, unmapped, map }
+
+enum _LooseWavQuickMapping { chromatic, roundRobins, velocityLayers }
+
+enum _DraftRebalanceAxis { roundRobin, velocity }
+
+class _StagedImport {
+  const _StagedImport({
+    required this.name,
+    required this.sourcePath,
+    required this.regions,
+  });
+
+  final String name;
+  final String sourcePath;
+  final List<PolySampleRegion> regions;
+}
 
 class _PolyMultisampleBuilderScreenState
     extends State<PolyMultisampleBuilderScreen> {
   static const _lastLocalSampleFolderKey =
       'poly_multisample.last_local_sample_folder';
-  static const _lastDecentSourceFolderKey =
-      'poly_multisample.last_decent_source_folder';
   static const _lastImportOutputFolderKey =
       'poly_multisample.last_import_output_folder';
   static const _lastCustomSourceFolderKey =
@@ -57,7 +69,6 @@ class _PolyMultisampleBuilderScreenState
   bool _loading = false;
   String? _error;
   String? _lastLocalSampleFolder;
-  String? _lastDecentSourceFolder;
   String? _lastImportOutputFolder;
   String? _lastCustomSourceFolder;
 
@@ -72,7 +83,6 @@ class _PolyMultisampleBuilderScreenState
     if (!mounted) return;
     setState(() {
       _lastLocalSampleFolder = prefs.getString(_lastLocalSampleFolderKey);
-      _lastDecentSourceFolder = prefs.getString(_lastDecentSourceFolderKey);
       _lastImportOutputFolder =
           prefs.getString(_lastImportOutputFolderKey) ??
           prefs.getString(_legacyLastDecentOutputFolderKey);
@@ -83,10 +93,6 @@ class _PolyMultisampleBuilderScreenState
   String? _existingDirectory(String? path) {
     if (path == null || path.isEmpty) return null;
     return Directory(path).existsSync() ? path : null;
-  }
-
-  String _directoryForPath(String path) {
-    return Directory(path).existsSync() ? path : p.dirname(path);
   }
 
   Future<void> _savePickerPreference(String key, String path) async {
@@ -187,29 +193,26 @@ class _PolyMultisampleBuilderScreenState
     }
   }
 
-  Future<void> _importDecentSampler() async {
-    final sourcePath = await _chooseDecentSourcePath();
-    if (sourcePath == null) return;
-
+  Future<_StagedImport?> _stageDecentSamplerSource(String sourcePath) async {
+    final converter = DecentSamplerConverter();
     setState(() {
       _loading = true;
       _error = null;
     });
     var options = const DecentSamplerConvertOptions();
     try {
-      final analysis = await DecentSamplerConverter().analyze(
-        sourcePath: sourcePath,
-      );
-      if (!mounted) return;
+      final analysis = await converter.analyze(sourcePath: sourcePath);
+      if (!mounted) return null;
       setState(() => _loading = false);
-      if (analysis.hasAmbiguousOverlaps && analysis.groups.length > 1) {
-        final chosen = await showDialog<DecentSamplerConvertOptions>(
-          context: context,
-          builder: (context) => _DecentImportOptionsDialog(analysis: analysis),
-        );
-        if (chosen == null) return;
-        options = chosen;
-      }
+      final chosen = await showDialog<DecentSamplerConvertOptions>(
+        context: context,
+        builder: (context) => _DecentImportOptionsDialog(
+          sourcePath: sourcePath,
+          analysis: analysis,
+        ),
+      );
+      if (chosen == null) return null;
+      options = chosen;
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -217,53 +220,47 @@ class _PolyMultisampleBuilderScreenState
           _loading = false;
         });
       }
-      return;
+      return null;
     }
-
-    final outputPath = await FilePicker.getDirectoryPath(
-      dialogTitle: 'Choose folder for Disting NT output',
-      initialDirectory:
-          _existingDirectory(_lastImportOutputFolder) ??
-          _existingDirectory(_lastLocalSampleFolder) ??
-          _existingDirectory(_lastDecentSourceFolder),
-    );
-    if (outputPath == null) return;
-    setState(() => _lastImportOutputFolder = outputPath);
-    unawaited(_savePickerPreference(_lastImportOutputFolderKey, outputPath));
 
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
-      final result = await DecentSamplerConverter().convert(
+      final stagingParent = await Directory.systemTemp.createTemp(
+        'nt_helper_decent_stage_',
+      );
+      final result = await converter.convert(
         sourcePath: sourcePath,
-        outputParentPath: outputPath,
+        outputParentPath: stagingParent.path,
         options: options,
       );
-      if (!mounted) return;
-      final firstFolder = result.outputFolders.isEmpty
-          ? null
-          : result.outputFolders.first;
-      if (firstFolder == null) {
-        throw Exception('No output folder was created.');
-      }
+      if (!mounted) return null;
+      setState(() => _loading = false);
+      final folder = await _chooseStagedDecentFolder(result.outputFolders);
+      if (folder == null) return null;
       final instrument = await PolyMultisampleFolderReader.readDirectory(
-        firstFolder,
+        folder,
       );
-      if (!mounted) return;
-      setState(() {
-        _instrument = instrument;
-        _sourceMode = _PolyMultisampleSourceMode.local;
-        _selectedRegion = instrument.regions.isEmpty
-            ? null
-            : instrument.regions.first;
-      });
-      await _showConversionResult(result);
+      if (!mounted) return null;
+      if (result.warnings.isNotEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Staged with ${result.warnings.length} warning(s).'),
+          ),
+        );
+      }
+      return _StagedImport(
+        name: instrument.name,
+        sourcePath: 'Decent import draft (not saved)',
+        regions: instrument.regions,
+      );
     } catch (e) {
       if (mounted) {
         setState(() => _error = e.toString());
       }
+      return null;
     } finally {
       if (mounted) {
         setState(() => _loading = false);
@@ -271,75 +268,70 @@ class _PolyMultisampleBuilderScreenState
     }
   }
 
-  Future<String?> _chooseDecentSourcePath() async {
-    final sourceKind = await showDialog<_DecentImportSourceKind>(
+  Future<String?> _chooseStagedDecentFolder(List<String> folders) async {
+    if (folders.isEmpty) throw Exception('No staged folder was created.');
+    if (folders.length == 1) return folders.single;
+    if (!mounted) return null;
+    return showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Import'),
-        content: const Text(
-          'Decent Sampler format only. Choose a .dslibrary, .zip, .dspreset, or an already extracted folder.',
+        title: const Text('Choose staged instrument'),
+        content: SizedBox(
+          width: 520,
+          child: ListView.separated(
+            shrinkWrap: true,
+            itemCount: folders.length,
+            separatorBuilder: (_, _) => const Divider(height: 1),
+            itemBuilder: (context, index) {
+              final folder = folders[index];
+              return ListTile(
+                leading: const Icon(Icons.folder_open),
+                title: Text(p.basename(folder)),
+                subtitle: Text(
+                  folder,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                onTap: () => Navigator.of(context).pop(folder),
+              );
+            },
+          ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
             child: const Text('Cancel'),
-          ),
-          OutlinedButton.icon(
-            onPressed: () =>
-                Navigator.of(context).pop(_DecentImportSourceKind.folder),
-            icon: const Icon(Icons.folder_open),
-            label: const Text('Extracted folder'),
-          ),
-          FilledButton.icon(
-            onPressed: () =>
-                Navigator.of(context).pop(_DecentImportSourceKind.file),
-            icon: const Icon(Icons.file_open),
-            label: const Text('File / archive'),
           ),
         ],
       ),
     );
-    if (sourceKind == null) return null;
-
-    if (sourceKind == _DecentImportSourceKind.folder) {
-      final path = await FilePicker.getDirectoryPath(
-        dialogTitle: 'Choose extracted Decent Sampler folder',
-        initialDirectory: _existingDirectory(_lastDecentSourceFolder),
-      );
-      if (path != null) {
-        setState(() => _lastDecentSourceFolder = path);
-        unawaited(_savePickerPreference(_lastDecentSourceFolderKey, path));
-      }
-      return path;
-    }
-
-    final source = await FilePicker.pickFiles(
-      dialogTitle: 'Choose Decent Sampler library or preset',
-      type: FileType.custom,
-      allowedExtensions: const ['dspreset', 'dslibrary', 'zip'],
-      allowMultiple: false,
-      initialDirectory: _existingDirectory(_lastDecentSourceFolder),
-    );
-    final path = source?.files.single.path;
-    if (path != null) {
-      final sourceFolder = _directoryForPath(path);
-      setState(() => _lastDecentSourceFolder = sourceFolder);
-      unawaited(
-        _savePickerPreference(_lastDecentSourceFolderKey, sourceFolder),
-      );
-    }
-    return path;
   }
 
-  Future<void> _startCustomDraft() async {
-    final seed = await showDialog<_CustomDraftSeed>(
+  Future<_StagedImport?> _stageFolderOrPickWavs(String path) async {
+    if (!await _folderContainsDecentPreset(path)) return null;
+    return _stageDecentSamplerSource(path);
+  }
+
+  Future<bool> _folderContainsDecentPreset(String path) async {
+    final dir = Directory(path);
+    if (!await dir.exists()) return false;
+    await for (final entity in dir.list(recursive: true, followLinks: false)) {
+      if (entity is! File) continue;
+      final normalized = entity.path.replaceAll('\\', '/');
+      if (_isMacOsArchiveJunkPath(normalized)) continue;
+      if (p.extension(entity.path).toLowerCase() == '.dspreset') return true;
+    }
+    return false;
+  }
+
+  Future<void> _startImportDraft() async {
+    final seed = await showDialog<_ImportDraftSeed>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Custom multisample'),
+        title: const Text('Import'),
         content: const Text(
-          'Collect loose WAVs, folders, or selected WAVs/groups from Decent '
-          'Sampler .dslibrary, .zip, or .dspreset sources, then map and save '
-          'them as a Disting NT multisample folder.',
+          'Collect WAVs, folders, or sampler sources into a staged draft, then '
+          'map and save them as a Disting NT multisample folder.',
         ),
         actions: [
           TextButton(
@@ -347,17 +339,17 @@ class _PolyMultisampleBuilderScreenState
             child: const Text('Cancel'),
           ),
           OutlinedButton.icon(
-            onPressed: () => Navigator.of(context).pop(_CustomDraftSeed.empty),
+            onPressed: () => Navigator.of(context).pop(_ImportDraftSeed.empty),
             icon: const Icon(Icons.add_box_outlined),
             label: const Text('Empty draft'),
           ),
           OutlinedButton.icon(
-            onPressed: () => Navigator.of(context).pop(_CustomDraftSeed.folder),
+            onPressed: () => Navigator.of(context).pop(_ImportDraftSeed.folder),
             icon: const Icon(Icons.folder_open),
             label: const Text('Add folder'),
           ),
           FilledButton.icon(
-            onPressed: () => Navigator.of(context).pop(_CustomDraftSeed.files),
+            onPressed: () => Navigator.of(context).pop(_ImportDraftSeed.files),
             icon: const Icon(Icons.audio_file),
             label: const Text('Add files'),
           ),
@@ -366,11 +358,13 @@ class _PolyMultisampleBuilderScreenState
     );
     if (seed == null) return;
 
+    var name = 'Import draft';
+    var sourceLabel = 'Import draft (not saved)';
     var regions = <PolySampleRegion>[];
-    if (seed == _CustomDraftSeed.files) {
+    if (seed == _ImportDraftSeed.files) {
       regions = await _pickCustomSourceFiles();
       if (regions.isEmpty) return;
-    } else if (seed == _CustomDraftSeed.folder) {
+    } else if (seed == _ImportDraftSeed.folder) {
       final path = await FilePicker.getDirectoryPath(
         dialogTitle: 'Choose source folder',
         initialDirectory:
@@ -382,7 +376,15 @@ class _PolyMultisampleBuilderScreenState
       if (!mounted) return;
       setState(() => _lastCustomSourceFolder = path);
       unawaited(_savePickerPreference(_lastCustomSourceFolderKey, path));
-      regions = await _pickSelectedDecentWavs(context, path);
+      final staged = await _stageFolderOrPickWavs(path);
+      if (staged != null) {
+        name = staged.name;
+        sourceLabel = staged.sourcePath;
+        regions = staged.regions;
+      } else {
+        if (!mounted) return;
+        regions = await _pickSelectedDecentWavs(context, path);
+      }
       if (regions.isEmpty && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('No WAV files found in that folder.')),
@@ -393,8 +395,8 @@ class _PolyMultisampleBuilderScreenState
     PolyMultisampleFolderReader.sortRegions(regions);
     setState(() {
       _instrument = PolySampleInstrument(
-        name: 'Custom draft',
-        sourcePath: 'Custom draft (not saved)',
+        name: name,
+        sourcePath: sourceLabel,
         regions: regions,
       );
       _sourceMode = _PolyMultisampleSourceMode.custom;
@@ -427,7 +429,8 @@ class _PolyMultisampleBuilderScreenState
         wavFiles.add(File(path));
       } else {
         if (!mounted) return regions;
-        regions.addAll(await _pickSelectedDecentWavs(context, path));
+        final staged = await _stageDecentSamplerSource(path);
+        if (staged != null) regions.addAll(staged.regions);
       }
     }
     if (wavFiles.isNotEmpty) {
@@ -443,98 +446,6 @@ class _PolyMultisampleBuilderScreenState
 
   Future<void> _loadSavedCustomFolder(String path) async {
     await _loadFolder(path);
-  }
-
-  Future<void> _showConversionResult(
-    DecentSamplerConversionResult result,
-  ) async {
-    if (!mounted) return;
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-    await showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Decent import complete'),
-        content: SizedBox(
-          width: 680,
-          child: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(result.summary, style: theme.textTheme.bodyLarge),
-                const SizedBox(height: 16),
-                Text(
-                  result.outputFolders.length == 1
-                      ? 'Loaded output folder'
-                      : 'Loaded output folders',
-                  style: theme.textTheme.titleSmall,
-                ),
-                const SizedBox(height: 6),
-                SelectableText(
-                  result.outputFolders.join('\n'),
-                  style: theme.textTheme.bodyMedium,
-                ),
-                if (result.decisions.isNotEmpty) ...[
-                  const SizedBox(height: 16),
-                  Text('Conversion choices', style: theme.textTheme.titleSmall),
-                  const SizedBox(height: 6),
-                  for (final decision in result.decisions.take(8))
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 6),
-                      child: Text(decision, style: theme.textTheme.bodyMedium),
-                    ),
-                ],
-                if (result.warnings.isNotEmpty) ...[
-                  const SizedBox(height: 16),
-                  Text('Warnings', style: theme.textTheme.titleSmall),
-                  const SizedBox(height: 6),
-                  for (final warning in result.warnings.take(8))
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 6),
-                      child: Text(
-                        warning,
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          color: colorScheme.error,
-                        ),
-                      ),
-                    ),
-                ],
-              ],
-            ),
-          ),
-        ),
-        actions: [
-          if (result.outputFolders.isNotEmpty)
-            TextButton.icon(
-              onPressed: () =>
-                  unawaited(_openFolderPath(result.outputFolders.first)),
-              icon: const Icon(Icons.folder_open),
-              label: const Text('Open folder'),
-            ),
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('OK'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _openFolderPath(String dir) async {
-    try {
-      if (Platform.isWindows) {
-        await Process.run('explorer.exe', [dir]);
-      } else if (Platform.isMacOS) {
-        await Process.run('open', [dir]);
-      } else {
-        await Process.run('xdg-open', [dir]);
-      }
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Could not open folder: $e')));
-    }
   }
 
   @override
@@ -593,15 +504,9 @@ class _PolyMultisampleBuilderScreenState
                 const SizedBox(width: 8),
                 _SourceButton(
                   selected: customSelected,
-                  onPressed: _loading ? null : _startCustomDraft,
-                  icon: Icons.playlist_add,
-                  label: 'Custom',
-                ),
-                const SizedBox(width: 8),
-                OutlinedButton.icon(
-                  onPressed: _loading ? null : _importDecentSampler,
-                  icon: const Icon(Icons.file_upload_outlined),
-                  label: const Text('Import'),
+                  onPressed: _loading ? null : _startImportDraft,
+                  icon: Icons.file_upload_outlined,
+                  label: 'Import',
                 ),
                 const SizedBox(width: 8),
                 OutlinedButton.icon(
@@ -623,8 +528,7 @@ class _PolyMultisampleBuilderScreenState
               ? _EmptyBuilderView(
                   onChooseFolder: _chooseFolder,
                   onChooseNtSdFolder: _chooseNtSdFolder,
-                  onImportDecentSampler: _importDecentSampler,
-                  onStartCustomDraft: _startCustomDraft,
+                  onImport: _startImportDraft,
                 )
               : _InstrumentEditor(
                   instrument: instrument,
@@ -635,6 +539,8 @@ class _PolyMultisampleBuilderScreenState
                     setState(() => _selectedRegion = region);
                   },
                   onCustomSaved: _loadSavedCustomFolder,
+                  onStageDecentSamplerSource: _stageDecentSamplerSource,
+                  onStageFolderSource: _stageFolderOrPickWavs,
                 ),
         ),
       ],
@@ -676,14 +582,12 @@ class _EmptyBuilderView extends StatelessWidget {
   const _EmptyBuilderView({
     required this.onChooseFolder,
     required this.onChooseNtSdFolder,
-    required this.onImportDecentSampler,
-    required this.onStartCustomDraft,
+    required this.onImport,
   });
 
   final VoidCallback onChooseFolder;
   final VoidCallback onChooseNtSdFolder;
-  final VoidCallback onImportDecentSampler;
-  final VoidCallback onStartCustomDraft;
+  final VoidCallback onImport;
 
   @override
   Widget build(BuildContext context) {
@@ -704,7 +608,7 @@ class _EmptyBuilderView extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             Text(
-              'Open an existing /samples instrument folder, or build your own from loose WAVs, folders, and selected Decent Sampler WAVs/groups.',
+              'Open an existing /samples instrument folder, or stage a new import from loose WAVs, folders, and Decent Sampler sources.',
               style: theme.textTheme.bodyMedium?.copyWith(
                 color: colorScheme.onSurfaceVariant,
               ),
@@ -727,12 +631,7 @@ class _EmptyBuilderView extends StatelessWidget {
                   label: const Text('Open Local Folder'),
                 ),
                 OutlinedButton.icon(
-                  onPressed: onStartCustomDraft,
-                  icon: const Icon(Icons.playlist_add),
-                  label: const Text('Custom'),
-                ),
-                OutlinedButton.icon(
-                  onPressed: onImportDecentSampler,
+                  onPressed: onImport,
                   icon: const Icon(Icons.file_upload_outlined),
                   label: const Text('Import'),
                 ),
@@ -740,7 +639,7 @@ class _EmptyBuilderView extends StatelessWidget {
             ),
             const SizedBox(height: 10),
             Text(
-              'Import currently supports Decent Sampler format only: .dslibrary, .zip, .dspreset, or extracted folders.',
+              'Import stages files and folders first, then saves only when you choose Save.',
               style: theme.textTheme.bodySmall?.copyWith(
                 color: colorScheme.onSurfaceVariant,
               ),
@@ -802,8 +701,12 @@ class _SdFolderPickerDialog extends StatelessWidget {
 }
 
 class _DecentImportOptionsDialog extends StatefulWidget {
-  const _DecentImportOptionsDialog({required this.analysis});
+  const _DecentImportOptionsDialog({
+    required this.sourcePath,
+    required this.analysis,
+  });
 
+  final String sourcePath;
   final DecentSamplerImportAnalysis analysis;
 
   @override
@@ -811,26 +714,156 @@ class _DecentImportOptionsDialog extends StatefulWidget {
       _DecentImportOptionsDialogState();
 }
 
+enum _DecentMappingAxis { tags, groups }
+
+enum _DecentQuickMapping {
+  keepXml,
+  chromatic,
+  velocityLayers,
+  roundRobins,
+  unmapped,
+}
+
 class _DecentImportOptionsDialogState
     extends State<_DecentImportOptionsDialog> {
-  DecentSamplerGroupHandling _handling =
-      DecentSamplerGroupHandling.velocityLayers;
-  String? _selectedGroupKey;
+  _DecentMappingAxis _mappingAxis = _DecentMappingAxis.tags;
+  String? _selectedPresetName;
+  late Set<String> _selectedGroupKeys;
+  late Map<String, int> _groupVelocityLayers;
+  late Map<String, DecentSamplerTagKeyRange> _groupKeyRanges;
+  late Map<String, int> _groupRoundRobins;
+  final Set<String> _editedGroupVelocityKeys = {};
+  final Set<String> _editedGroupRangeKeys = {};
+  final Set<String> _editedGroupRoundRobinKeys = {};
+  late Set<String> _selectedTagKeys;
+  late Map<String, int> _tagVelocityLayers;
+  late Map<String, DecentSamplerTagKeyRange> _tagKeyRanges;
+  late Map<String, int> _tagRoundRobins;
+  final Set<String> _editedTagVelocityKeys = {};
+  final Set<String> _editedTagRangeKeys = {};
+  final Set<String> _editedTagRoundRobinKeys = {};
+  _DecentQuickMapping _decentQuickMapping = _DecentQuickMapping.keepXml;
+  int _decentMapRootMidi = 36;
+  int _decentMapVelocityLayer = 1;
   bool _includeSourceDocs = true;
+  final AudioPlayer _previewPlayer = AudioPlayer();
+  final Map<_DecentWavCandidate, File> _previewFiles = {};
+  StreamSubscription<void>? _previewCompleteSubscription;
+  List<_DecentWavGroup>? _previewGroups;
+  String? _previewingChoiceKey;
+  bool _previewBusy = false;
+
+  bool get _hasPresetChoices => widget.analysis.presets.length > 1;
+  bool get _hasPresetSelection => widget.analysis.presets.isNotEmpty;
+  List<DecentSamplerGroupInfo> get _visibleGroups {
+    if (!_hasPresetChoices || _selectedPresetName == null) {
+      return widget.analysis.groups;
+    }
+    return widget.analysis.groups
+        .where((group) => group.presetName == _selectedPresetName)
+        .toList();
+  }
+
+  List<DecentSamplerTag> get _visibleTags {
+    if (!_hasPresetChoices || _selectedPresetName == null) {
+      return widget.analysis.tags;
+    }
+    return widget.analysis.tags
+        .where((tag) => tag.presetName == _selectedPresetName)
+        .toList();
+  }
+
+  bool get _hasTagSelection => _visibleTags.isNotEmpty;
+  bool get _hasGroupSelection => _visibleGroups.isNotEmpty;
+  bool get _tagsMirrorGroups {
+    final tags = _visibleTags;
+    final groups = _visibleGroups;
+    if (tags.isEmpty || groups.isEmpty || tags.length != groups.length) {
+      return false;
+    }
+    final groupByKey = {for (final group in groups) group.key: group};
+    final coveredGroupKeys = <String>{};
+    for (final tag in tags) {
+      final matchingGroupKeys = tag.groupKeys
+          .where(groupByKey.containsKey)
+          .toList();
+      if (matchingGroupKeys.length != 1) return false;
+      final group = groupByKey[matchingGroupKeys.single]!;
+      if (_normalizedChoiceLabel(tag.label) !=
+          _normalizedChoiceLabel(_choiceLeafLabel(group.name))) {
+        return false;
+      }
+      coveredGroupKeys.add(group.key);
+    }
+    return coveredGroupKeys.length == groups.length;
+  }
+
+  bool get _usingTags =>
+      (_mappingAxis == _DecentMappingAxis.tags || _tagsMirrorGroups) &&
+      _hasTagSelection;
+  bool get _usingGroups =>
+      !_tagsMirrorGroups &&
+      (_mappingAxis == _DecentMappingAxis.groups || !_hasTagSelection);
+  bool get _mappingShowsControls =>
+      _decentQuickMapping != _DecentQuickMapping.unmapped;
+  bool get _mappingAppliesQuickValues =>
+      _decentQuickMapping != _DecentQuickMapping.keepXml &&
+      _decentQuickMapping != _DecentQuickMapping.unmapped;
 
   @override
   void initState() {
     super.initState();
-    _handling = widget.analysis.recommendedGroupHandling;
-    _selectedGroupKey = widget.analysis.groups.isEmpty
+    _selectedPresetName = widget.analysis.presets.isEmpty
         ? null
-        : widget.analysis.groups.first.key;
+        : widget.analysis.presets.first.name;
+    _mappingAxis = _visibleTags.isNotEmpty
+        ? _DecentMappingAxis.tags
+        : _DecentMappingAxis.groups;
+    _selectedGroupKeys = {for (final group in _visibleGroups) group.key};
+    _groupVelocityLayers = _defaultGroupVelocityLayers(_selectedGroupKeys);
+    _groupKeyRanges = _defaultGroupKeyRanges(_selectedGroupKeys);
+    _groupRoundRobins = _defaultGroupRoundRobins(_selectedGroupKeys);
+    _selectedTagKeys = _defaultSelectedTagKeys(_visibleTags, _visibleGroups);
+    _tagVelocityLayers = _defaultTagVelocityLayers(_selectedTagKeys);
+    _tagKeyRanges = _defaultTagKeyRanges(_selectedTagKeys);
+    _tagRoundRobins = _defaultTagRoundRobins(_selectedTagKeys);
+    _markDefaultEditedTagMappingIfUseful();
+    _previewCompleteSubscription = _previewPlayer.onPlayerComplete.listen((_) {
+      if (!mounted) return;
+      setState(() => _previewingChoiceKey = null);
+    });
+  }
+
+  @override
+  void dispose() {
+    _previewCompleteSubscription?.cancel();
+    _previewPlayer.dispose();
+    super.dispose();
+  }
+
+  bool get _selectedTagsLookLikeDynamics {
+    if (_selectedTagKeys.length < 2) return false;
+    final selected = _visibleTags
+        .where((tag) => _selectedTagKeys.contains(tag.key))
+        .toList();
+    if (selected.length < 2) return false;
+    return selected.every((tag) => tag.role == DecentSamplerTagRole.dynamic);
+  }
+
+  void _markDefaultEditedTagMappingIfUseful() {
+    if (_mappingAxis != _DecentMappingAxis.tags ||
+        !_selectedTagsLookLikeDynamics) {
+      return;
+    }
+    _decentQuickMapping = _DecentQuickMapping.velocityLayers;
+    _applyDecentQuickMappingToState();
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final groups = widget.analysis.groups;
+    final groups = _visibleGroups;
+    final tags = _visibleTags;
     return AlertDialog(
       title: const Text('Decent import strategy'),
       content: SizedBox(
@@ -841,86 +874,137 @@ class _DecentImportOptionsDialogState
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                '${widget.analysis.presetName} contains Decent Sampler group mappings that need a choice. '
-                'Each preset imports as its own Disting NT folder; these choices control how groups inside each preset are mapped.',
+                _hasPresetChoices
+                    ? '${widget.analysis.presetName} contains ${widget.analysis.presets.length} Decent Sampler presets. '
+                          'Choose one preset for this Poly Multisample folder, then choose the sound material to bring in.'
+                    : '${widget.analysis.presetName} contains Decent Sampler mapping data. '
+                          'Review what will be brought into this Poly Multisample folder.',
                 style: theme.textTheme.bodyLarge,
               ),
-              const SizedBox(height: 14),
-              _DecentImportSummaryPanel(analysis: widget.analysis),
               const SizedBox(height: 12),
-              ExpansionTile(
-                tilePadding: EdgeInsets.zero,
-                childrenPadding: EdgeInsets.zero,
-                title: Text(
-                  'Detailed group report',
-                  style: theme.textTheme.titleSmall,
+              _DecentImportSummaryPanel(analysis: widget.analysis),
+              if (_hasPresetSelection) ...[
+                const SizedBox(height: 12),
+                _PresetSelectionPanel(
+                  presets: widget.analysis.presets,
+                  selectedName: _selectedPresetName,
+                  onSelected: _selectPreset,
                 ),
-                subtitle: Text(
-                  '${groups.length} Decent group(s), shown for checking the import decision.',
-                ),
-                children: [
-                  DecoratedBox(
-                    decoration: BoxDecoration(
-                      border: Border.all(
-                        color: theme.colorScheme.outlineVariant,
-                      ),
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: Column(
-                      children: [
-                        for (var index = 0; index < groups.length; index++)
-                          _GroupReportRow(
-                            group: groups[index],
-                            showDivider: index < groups.length - 1,
-                          ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 18),
-              Text('Import choices', style: theme.textTheme.titleSmall),
-              const SizedBox(height: 8),
-              _ImportOptionTile(
-                value: DecentSamplerGroupHandling.velocityLayers,
-                groupValue: _handling,
-                title: 'Use groups as velocity layers',
-                subtitle:
-                    'Groups become V1, V2, V3 etc. Round robins stay round robins.',
-                onChanged: _setHandling,
-              ),
-              _ImportOptionTile(
-                value: DecentSamplerGroupHandling.splitFolders,
-                groupValue: _handling,
-                title: 'Split groups into separate folders',
-                subtitle:
-                    'One Disting folder per group/layer/articulation. Round robins stay round robins.',
-                onChanged: _setHandling,
-              ),
-              _ImportOptionTile(
-                value: DecentSamplerGroupHandling.selectedGroup,
-                groupValue: _handling,
-                title: 'Convert one group only',
-                subtitle: 'Choose one Decent group and ignore the others.',
-                onChanged: _setHandling,
-              ),
-              if (_handling == DecentSamplerGroupHandling.selectedGroup) ...[
-                const SizedBox(height: 8),
-                for (final group in groups)
-                  _SelectedGroupRow(
-                    group: group,
-                    selected: group.key == _selectedGroupKey,
-                    onTap: () => setState(() => _selectedGroupKey = group.key),
-                  ),
               ],
-              _ImportOptionTile(
-                value: DecentSamplerGroupHandling.auto,
-                groupValue: _handling,
-                title: 'Default mapping',
-                subtitle:
-                    'Keep the automatic parser behavior and report any ambiguity.',
-                onChanged: _setHandling,
-              ),
+              if (_hasTagSelection &&
+                  _hasGroupSelection &&
+                  !_tagsMirrorGroups) ...[
+                const SizedBox(height: 12),
+                _MappingAxisPanel(
+                  axis: _mappingAxis,
+                  onChanged: (axis) => setState(() {
+                    _mappingAxis = axis;
+                    _decentQuickMapping = _DecentQuickMapping.keepXml;
+                    _clearEditedDecentMapping();
+                  }),
+                ),
+              ],
+              if (_usingTags || _usingGroups) ...[
+                const SizedBox(height: 12),
+                _DecentQuickMappingPanel(
+                  mode: _decentQuickMapping,
+                  rootMidi: _decentMapRootMidi,
+                  velocityLayer: _decentMapVelocityLayer,
+                  onModeChanged: _setDecentQuickMapping,
+                  onRootChanged: _setDecentMapRootMidi,
+                  onVelocityChanged: _setDecentMapVelocityLayer,
+                ),
+              ],
+              if (_usingTags) ...[
+                const SizedBox(height: 12),
+                _TagSelectionPanel(
+                  tags: tags,
+                  selectedKeys: _selectedTagKeys,
+                  velocityAssignments: _tagVelocityLayers,
+                  rangeAssignments: _tagKeyRanges,
+                  roundRobinAssignments: _tagRoundRobins,
+                  editedVelocityKeys: _editedTagVelocityKeys,
+                  editedRangeKeys: _editedTagRangeKeys,
+                  editedRoundRobinKeys: _editedTagRoundRobinKeys,
+                  customMapping: _mappingShowsControls,
+                  mappingMode: _decentQuickMapping,
+                  previewingKey: _previewingChoiceKey,
+                  previewBusy: _previewBusy,
+                  onToggle: _toggleTag,
+                  onPreview: _toggleTagPreview,
+                  onVelocityChanged: _setTagVelocityLayer,
+                  onRangeChanged: _setTagKeyRange,
+                  onRoundRobinChanged: _setTagRoundRobin,
+                  onSelectAll: () => setState(() {
+                    _selectedTagKeys = {for (final tag in tags) tag.key};
+                    _tagVelocityLayers = _defaultTagVelocityLayers(
+                      _selectedTagKeys,
+                    );
+                    _tagKeyRanges = _defaultTagKeyRanges(_selectedTagKeys);
+                    _tagRoundRobins = _defaultTagRoundRobins(_selectedTagKeys);
+                    if (_mappingAppliesQuickValues) {
+                      _applyDecentQuickMappingToState();
+                    }
+                  }),
+                  onClear: () => setState(() {
+                    _selectedTagKeys.clear();
+                    _tagVelocityLayers = {};
+                    _tagKeyRanges = {};
+                    _tagRoundRobins = {};
+                    _editedTagVelocityKeys.clear();
+                    _editedTagRangeKeys.clear();
+                    _editedTagRoundRobinKeys.clear();
+                  }),
+                ),
+              ],
+              if (_usingGroups) ...[
+                const SizedBox(height: 12),
+                _GroupMappingPanel(
+                  groups: groups,
+                  selectedKeys: _selectedGroupKeys,
+                  velocityAssignments: _groupVelocityLayers,
+                  rangeAssignments: _groupKeyRanges,
+                  roundRobinAssignments: _groupRoundRobins,
+                  editedVelocityKeys: _editedGroupVelocityKeys,
+                  editedRangeKeys: _editedGroupRangeKeys,
+                  editedRoundRobinKeys: _editedGroupRoundRobinKeys,
+                  customMapping: _mappingShowsControls,
+                  mappingMode: _decentQuickMapping,
+                  previewingKey: _previewingChoiceKey,
+                  previewBusy: _previewBusy,
+                  onToggle: _toggleGroup,
+                  onPreview: _toggleGroupPreview,
+                  onVelocityChanged: _setGroupVelocityLayer,
+                  onRangeChanged: _setGroupKeyRange,
+                  onRoundRobinChanged: _setGroupRoundRobin,
+                  onSelectAll: () => setState(() {
+                    _selectedGroupKeys = {
+                      for (final group in groups) group.key,
+                    };
+                    _groupVelocityLayers = _defaultGroupVelocityLayers(
+                      _selectedGroupKeys,
+                    );
+                    _groupKeyRanges = _defaultGroupKeyRanges(
+                      _selectedGroupKeys,
+                    );
+                    _groupRoundRobins = _defaultGroupRoundRobins(
+                      _selectedGroupKeys,
+                    );
+                    if (_mappingAppliesQuickValues) {
+                      _applyDecentQuickMappingToState();
+                    }
+                  }),
+                  onClear: () => setState(() {
+                    _selectedGroupKeys.clear();
+                    _groupVelocityLayers = {};
+                    _groupKeyRanges = {};
+                    _groupRoundRobins = {};
+                    _editedGroupVelocityKeys.clear();
+                    _editedGroupRangeKeys.clear();
+                    _editedGroupRoundRobinKeys.clear();
+                  }),
+                ),
+              ],
               const SizedBox(height: 12),
               SwitchListTile(
                 value: _includeSourceDocs,
@@ -942,28 +1026,771 @@ class _DecentImportOptionsDialogState
           child: const Text('Cancel'),
         ),
         FilledButton(
-          onPressed: () {
-            Navigator.of(context).pop(
-              DecentSamplerConvertOptions(
-                groupHandling: _handling,
-                selectedGroupKey:
-                    _handling == DecentSamplerGroupHandling.selectedGroup
-                    ? _selectedGroupKey
-                    : null,
-                includeSourceDocs: _includeSourceDocs,
-              ),
-            );
-          },
+          onPressed: _canContinue
+              ? () {
+                  Navigator.of(context).pop(
+                    DecentSamplerConvertOptions(
+                      groupHandling: _usingTags || _usingGroups
+                          ? DecentSamplerGroupHandling.tagMapping
+                          : DecentSamplerGroupHandling.auto,
+                      selectedPresetNames: _hasPresetSelection
+                          ? [_selectedPresetName].whereType<String>().toList()
+                          : const [],
+                      selectedGroupKeys: _usingGroups
+                          ? _selectedGroupKeys.toList()
+                          : const [],
+                      selectedTagKeys: _usingTags
+                          ? _selectedTagKeys.toList()
+                          : const [],
+                      groupVelocityLayers: _mappingShowsControls && _usingGroups
+                          ? _explicitGroupVelocityLayers()
+                          : const {},
+                      groupKeyRanges: _mappingShowsControls && _usingGroups
+                          ? _explicitGroupKeyRanges()
+                          : const {},
+                      groupRoundRobins: _mappingShowsControls && _usingGroups
+                          ? _explicitGroupRoundRobins()
+                          : const {},
+                      tagVelocityLayers: _mappingShowsControls && _usingTags
+                          ? _explicitTagVelocityLayers()
+                          : const {},
+                      tagKeyRanges: _mappingShowsControls && _usingTags
+                          ? _explicitTagKeyRanges()
+                          : const {},
+                      tagRoundRobins: _mappingShowsControls && _usingTags
+                          ? _explicitTagRoundRobins()
+                          : const {},
+                      preserveXmlMapping: true,
+                      addUnmapped:
+                          _decentQuickMapping == _DecentQuickMapping.unmapped,
+                      includeSourceDocs: _includeSourceDocs,
+                    ),
+                  );
+                }
+              : null,
           child: const Text('Continue'),
         ),
       ],
     );
   }
 
-  void _setHandling(DecentSamplerGroupHandling? value) {
-    if (value == null) return;
-    setState(() => _handling = value);
+  bool get _canContinue {
+    if (_hasPresetSelection && _selectedPresetName == null) return false;
+    if (_usingTags && _selectedTagKeys.isEmpty) return false;
+    if (_usingGroups && _selectedGroupKeys.isEmpty) return false;
+    if (_mappingShowsControls && _usingTags && _hasInvalidTagKeyRanges) {
+      return false;
+    }
+    if (_mappingShowsControls &&
+        _usingGroups &&
+        (_selectedGroupKeys.isEmpty || _hasInvalidGroupKeyRanges)) {
+      return false;
+    }
+    return true;
   }
+
+  void _selectPreset(String name) {
+    setState(() {
+      _selectedPresetName = name;
+      _resetSelectionsForCurrentPreset();
+    });
+  }
+
+  void _resetSelectionsForCurrentPreset() {
+    final tags = _visibleTags;
+    final groups = _visibleGroups;
+    _mappingAxis = tags.isNotEmpty
+        ? _DecentMappingAxis.tags
+        : _DecentMappingAxis.groups;
+    _selectedGroupKeys = {for (final group in groups) group.key};
+    _groupVelocityLayers = _defaultGroupVelocityLayers(_selectedGroupKeys);
+    _groupKeyRanges = _defaultGroupKeyRanges(_selectedGroupKeys);
+    _groupRoundRobins = _defaultGroupRoundRobins(_selectedGroupKeys);
+    _selectedTagKeys = _defaultSelectedTagKeys(tags, groups);
+    _tagVelocityLayers = _defaultTagVelocityLayers(_selectedTagKeys);
+    _tagKeyRanges = _defaultTagKeyRanges(_selectedTagKeys);
+    _tagRoundRobins = _defaultTagRoundRobins(_selectedTagKeys);
+    _decentQuickMapping = _DecentQuickMapping.keepXml;
+    _clearEditedDecentMapping();
+    _markDefaultEditedTagMappingIfUseful();
+  }
+
+  void _toggleTag(String key) {
+    setState(() {
+      final next = Set<String>.of(_selectedTagKeys);
+      final removed = next.remove(key);
+      if (!removed) next.add(key);
+      _selectedTagKeys = next;
+      _syncTagVelocityLayers();
+      _syncTagKeyRanges();
+      _syncTagRoundRobins();
+      if (_mappingAppliesQuickValues) {
+        _applyDecentQuickMappingToState();
+      }
+    });
+  }
+
+  void _toggleGroup(String key) {
+    setState(() {
+      final next = Set<String>.of(_selectedGroupKeys);
+      final removed = next.remove(key);
+      if (!removed) next.add(key);
+      _selectedGroupKeys = next;
+      _syncGroupVelocityLayers();
+      _syncGroupKeyRanges();
+      _syncGroupRoundRobins();
+      if (_mappingAppliesQuickValues) {
+        _applyDecentQuickMappingToState();
+      }
+    });
+  }
+
+  Future<void> _toggleTagPreview(DecentSamplerTag tag) {
+    return _toggleDecentChoicePreview(
+      choiceKey: 'tag:${tag.key}',
+      label: tag.label,
+      previewSourcePath: tag.previewSourcePath,
+      groupKeys: tag.groupKeys,
+    );
+  }
+
+  Future<void> _toggleGroupPreview(DecentSamplerGroupInfo group) {
+    return _toggleDecentChoicePreview(
+      choiceKey: 'group:${group.key}',
+      label: group.name,
+      previewSourcePath: group.previewSourcePath,
+      groupKeys: [group.key],
+    );
+  }
+
+  Future<void> _toggleDecentChoicePreview({
+    required String choiceKey,
+    required String label,
+    required String? previewSourcePath,
+    required List<String> groupKeys,
+  }) async {
+    if (_previewingChoiceKey == choiceKey) {
+      await _previewPlayer.stop();
+      if (mounted) setState(() => _previewingChoiceKey = null);
+      return;
+    }
+
+    setState(() => _previewBusy = true);
+    try {
+      await _previewPlayer.stop();
+      final groups =
+          _previewGroups ?? await _decentWavGroups(widget.sourcePath);
+      _previewGroups = groups;
+      final candidate = _previewCandidateForChoice(
+        groups,
+        label: label,
+        previewSourcePath: previewSourcePath,
+        groupKeys: groupKeys,
+      );
+      if (candidate == null) return;
+      final file = _previewFiles[candidate] ?? await candidate.materialize();
+      _previewFiles[candidate] = file;
+      await _previewPlayer.setReleaseMode(ReleaseMode.stop);
+      await _previewPlayer.play(DeviceFileSource(file.path), volume: 1.0);
+      if (mounted) setState(() => _previewingChoiceKey = choiceKey);
+    } finally {
+      if (mounted) setState(() => _previewBusy = false);
+    }
+  }
+
+  _DecentWavCandidate? _previewCandidateForChoice(
+    List<_DecentWavGroup> groups, {
+    required String label,
+    required String? previewSourcePath,
+    required List<String> groupKeys,
+  }) {
+    final candidates = groups.expand((group) => group.candidates).toList();
+    if (candidates.isEmpty) return null;
+    final sourceBase = previewSourcePath == null
+        ? null
+        : _previewMatchKey(p.basename(previewSourcePath));
+    if (sourceBase != null && sourceBase.isNotEmpty) {
+      for (final candidate in candidates) {
+        final labelKey = _previewMatchKey(p.basename(candidate.label));
+        final mappingPath = candidate.mapping.path;
+        final mappingKey = mappingPath == null
+            ? ''
+            : _previewMatchKey(p.basename(mappingPath));
+        if (labelKey == sourceBase || mappingKey == sourceBase) {
+          return candidate;
+        }
+      }
+    }
+
+    final groupKeySet = groupKeys.toSet();
+    for (final candidate in candidates) {
+      if (groupKeySet.contains(
+        _choiceKeyForPreviewLabel(candidate.groupLabel),
+      )) {
+        return candidate;
+      }
+    }
+
+    final choiceKey = _previewMatchKey(label);
+    for (final candidate in candidates) {
+      final groupKey = _previewMatchKey(candidate.groupLabel);
+      if (groupKey == choiceKey ||
+          groupKey.contains(choiceKey) ||
+          choiceKey.contains(groupKey)) {
+        return candidate;
+      }
+    }
+    for (final candidate in candidates) {
+      final sampleKey = _previewMatchKey(candidate.label);
+      if (sampleKey.contains(choiceKey)) return candidate;
+    }
+    return candidates.first;
+  }
+
+  static String _previewMatchKey(String value) {
+    return value.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '');
+  }
+
+  static String _choiceKeyForPreviewLabel(String value) {
+    return _previewMatchKey(_choiceLeafLabel(value));
+  }
+
+  List<DecentSamplerTag> get _selectedTagChoices =>
+      _visibleTags.where((tag) => _selectedTagKeys.contains(tag.key)).toList();
+
+  void _setTagVelocityLayer(String tagKey, int layer) {
+    setState(() {
+      _tagVelocityLayers = {
+        ..._tagVelocityLayers,
+        tagKey: layer.clamp(1, 32).toInt(),
+      };
+      _editedTagVelocityKeys.add(tagKey);
+    });
+  }
+
+  void _setGroupVelocityLayer(String groupKey, int layer) {
+    setState(() {
+      _groupVelocityLayers = {
+        ..._groupVelocityLayers,
+        groupKey: layer.clamp(1, 32).toInt(),
+      };
+      _editedGroupVelocityKeys.add(groupKey);
+    });
+  }
+
+  void _setTagRoundRobin(String tagKey, int roundRobin) {
+    setState(() {
+      _tagRoundRobins = {
+        ..._tagRoundRobins,
+        tagKey: roundRobin.clamp(1, 32).toInt(),
+      };
+      _editedTagRoundRobinKeys.add(tagKey);
+    });
+  }
+
+  void _setGroupRoundRobin(String groupKey, int roundRobin) {
+    setState(() {
+      _groupRoundRobins = {
+        ..._groupRoundRobins,
+        groupKey: roundRobin.clamp(1, 32).toInt(),
+      };
+      _editedGroupRoundRobinKeys.add(groupKey);
+    });
+  }
+
+  void _setDecentQuickMapping(_DecentQuickMapping mode) {
+    setState(() {
+      _decentQuickMapping = mode;
+      _applyDecentQuickMappingToState();
+    });
+  }
+
+  void _setDecentMapRootMidi(int value) {
+    setState(() {
+      _decentMapRootMidi = value.clamp(0, 127).toInt();
+      _applyDecentQuickMappingToState();
+    });
+  }
+
+  void _setDecentMapVelocityLayer(int value) {
+    setState(() {
+      _decentMapVelocityLayer = value.clamp(1, 32).toInt();
+      _applyDecentQuickMappingToState();
+    });
+  }
+
+  void _clearEditedDecentMapping() {
+    _editedTagVelocityKeys.clear();
+    _editedTagRangeKeys.clear();
+    _editedTagRoundRobinKeys.clear();
+    _editedGroupVelocityKeys.clear();
+    _editedGroupRangeKeys.clear();
+    _editedGroupRoundRobinKeys.clear();
+  }
+
+  void _resetDecentMappingValuesToDefaults() {
+    _tagVelocityLayers = _defaultTagVelocityLayers(_selectedTagKeys);
+    _tagKeyRanges = _defaultTagKeyRanges(_selectedTagKeys);
+    _tagRoundRobins = _defaultTagRoundRobins(_selectedTagKeys);
+    _groupVelocityLayers = _defaultGroupVelocityLayers(_selectedGroupKeys);
+    _groupKeyRanges = _defaultGroupKeyRanges(_selectedGroupKeys);
+    _groupRoundRobins = _defaultGroupRoundRobins(_selectedGroupKeys);
+  }
+
+  void _applyDecentQuickMappingToState() {
+    _resetDecentMappingValuesToDefaults();
+    _clearEditedDecentMapping();
+    if (_decentQuickMapping == _DecentQuickMapping.keepXml ||
+        _decentQuickMapping == _DecentQuickMapping.unmapped) {
+      return;
+    }
+    if (_usingTags) {
+      final keys = [
+        for (final tag in _visibleTags)
+          if (_selectedTagKeys.contains(tag.key)) tag.key,
+      ];
+      for (var index = 0; index < keys.length; index++) {
+        final key = keys[index];
+        if (_decentQuickMapping == _DecentQuickMapping.chromatic) {
+          final root = (_decentMapRootMidi + index).clamp(0, 127).toInt();
+          _tagKeyRanges[key] = DecentSamplerTagKeyRange(
+            lowMidi: root,
+            rootMidi: root,
+            highMidi: root,
+          );
+          _editedTagRangeKeys.add(key);
+        }
+        if (_decentQuickMapping == _DecentQuickMapping.velocityLayers ||
+            _decentQuickMapping == _DecentQuickMapping.chromatic) {
+          _tagVelocityLayers[key] =
+              _decentQuickMapping == _DecentQuickMapping.velocityLayers
+              ? index + 1
+              : _decentMapVelocityLayer;
+          _editedTagVelocityKeys.add(key);
+        }
+        if (_decentQuickMapping == _DecentQuickMapping.roundRobins) {
+          _tagRoundRobins[key] = index + 1;
+          _editedTagRoundRobinKeys.add(key);
+        }
+      }
+    } else if (_usingGroups) {
+      final keys = [
+        for (final group in _visibleGroups)
+          if (_selectedGroupKeys.contains(group.key)) group.key,
+      ];
+      for (var index = 0; index < keys.length; index++) {
+        final key = keys[index];
+        if (_decentQuickMapping == _DecentQuickMapping.chromatic) {
+          final root = (_decentMapRootMidi + index).clamp(0, 127).toInt();
+          _groupKeyRanges[key] = DecentSamplerTagKeyRange(
+            lowMidi: root,
+            rootMidi: root,
+            highMidi: root,
+          );
+          _editedGroupRangeKeys.add(key);
+        }
+        if (_decentQuickMapping == _DecentQuickMapping.velocityLayers ||
+            _decentQuickMapping == _DecentQuickMapping.chromatic) {
+          _groupVelocityLayers[key] =
+              _decentQuickMapping == _DecentQuickMapping.velocityLayers
+              ? index + 1
+              : _decentMapVelocityLayer;
+          _editedGroupVelocityKeys.add(key);
+        }
+        if (_decentQuickMapping == _DecentQuickMapping.roundRobins) {
+          _groupRoundRobins[key] = index + 1;
+          _editedGroupRoundRobinKeys.add(key);
+        }
+      }
+    }
+  }
+
+  void _syncTagVelocityLayers() {
+    final existing = Map<String, int>.of(_tagVelocityLayers);
+    final next = <String, int>{};
+    for (final tag in _visibleTags) {
+      if (!_selectedTagKeys.contains(tag.key)) continue;
+      final existingLayer = existing[tag.key];
+      if (existingLayer != null) {
+        next[tag.key] = existingLayer.clamp(1, 32).toInt();
+        continue;
+      }
+      next[tag.key] = tag.defaultVelocityLayer.clamp(1, 32).toInt();
+    }
+    _tagVelocityLayers = next;
+    _editedTagVelocityKeys.removeWhere(
+      (key) => !_selectedTagKeys.contains(key),
+    );
+  }
+
+  void _syncTagRoundRobins() {
+    final existing = Map<String, int>.of(_tagRoundRobins);
+    _tagRoundRobins = {
+      for (final tag in _visibleTags)
+        if (_selectedTagKeys.contains(tag.key)) tag.key: existing[tag.key] ?? 1,
+    };
+    _editedTagRoundRobinKeys.removeWhere(
+      (key) => !_selectedTagKeys.contains(key),
+    );
+  }
+
+  void _syncGroupVelocityLayers() {
+    final existing = Map<String, int>.of(_groupVelocityLayers);
+    final next = <String, int>{};
+    for (final group in _visibleGroups) {
+      if (!_selectedGroupKeys.contains(group.key)) continue;
+      next[group.key] =
+          existing[group.key] ??
+          group.defaultVelocityLayer.clamp(1, 32).toInt();
+    }
+    _groupVelocityLayers = next;
+    _editedGroupVelocityKeys.removeWhere(
+      (key) => !_selectedGroupKeys.contains(key),
+    );
+  }
+
+  void _syncGroupRoundRobins() {
+    final existing = Map<String, int>.of(_groupRoundRobins);
+    _groupRoundRobins = {
+      for (final group in _visibleGroups)
+        if (_selectedGroupKeys.contains(group.key))
+          group.key: existing[group.key] ?? 1,
+    };
+    _editedGroupRoundRobinKeys.removeWhere(
+      (key) => !_selectedGroupKeys.contains(key),
+    );
+  }
+
+  bool get _hasInvalidTagKeyRanges {
+    for (final tag in _selectedTagChoices) {
+      final range = _tagKeyRanges[tag.key];
+      if (range == null) continue;
+      if (!_editedTagRangeKeys.contains(tag.key)) continue;
+      if (range.lowMidi < 0 ||
+          range.highMidi > 127 ||
+          range.lowMidi > range.rootMidi ||
+          range.rootMidi > range.highMidi) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool get _hasInvalidGroupKeyRanges {
+    for (final group in _visibleGroups) {
+      if (!_selectedGroupKeys.contains(group.key)) continue;
+      final range = _groupKeyRanges[group.key];
+      if (range == null) return true;
+      if (!_editedGroupRangeKeys.contains(group.key)) continue;
+      if (range.lowMidi < 0 ||
+          range.highMidi > 127 ||
+          range.lowMidi > range.rootMidi ||
+          range.rootMidi > range.highMidi) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  void _setTagKeyRange(String tagKey, DecentSamplerTagKeyRange range) {
+    setState(() {
+      final next = Map<String, DecentSamplerTagKeyRange>.of(_tagKeyRanges);
+      if (range.enabled) {
+        next[tagKey] = range;
+        _editedTagRangeKeys.add(tagKey);
+      } else {
+        next.remove(tagKey);
+        _editedTagRangeKeys.remove(tagKey);
+      }
+      _tagKeyRanges = next;
+    });
+  }
+
+  void _setGroupKeyRange(String groupKey, DecentSamplerTagKeyRange range) {
+    setState(() {
+      _groupKeyRanges = {..._groupKeyRanges, groupKey: range};
+      _editedGroupRangeKeys.add(groupKey);
+    });
+  }
+
+  void _syncTagKeyRanges() {
+    final existing = Map<String, DecentSamplerTagKeyRange>.of(_tagKeyRanges);
+    final defaults = _defaultTagKeyRanges(_selectedTagKeys);
+    _tagKeyRanges = {
+      for (final tag in _visibleTags)
+        if (_selectedTagKeys.contains(tag.key))
+          tag.key: existing[tag.key] ?? defaults[tag.key]!,
+    };
+    _editedTagRangeKeys.removeWhere((key) => !_selectedTagKeys.contains(key));
+  }
+
+  void _syncGroupKeyRanges() {
+    final existing = Map<String, DecentSamplerTagKeyRange>.of(_groupKeyRanges);
+    final defaults = _defaultGroupKeyRanges(_selectedGroupKeys);
+    _groupKeyRanges = {
+      for (final group in _visibleGroups)
+        if (_selectedGroupKeys.contains(group.key))
+          group.key: existing[group.key] ?? defaults[group.key]!,
+    };
+    _editedGroupRangeKeys.removeWhere(
+      (key) => !_selectedGroupKeys.contains(key),
+    );
+  }
+
+  Map<String, int> _defaultTagVelocityLayers(Set<String> selectedKeys) {
+    final layers = <String, int>{};
+    for (final tag in _visibleTags) {
+      if (!selectedKeys.contains(tag.key)) continue;
+      layers[tag.key] = tag.defaultVelocityLayer.clamp(1, 32).toInt();
+    }
+    return layers;
+  }
+
+  Map<String, int> _defaultGroupVelocityLayers(Set<String> selectedKeys) {
+    final layers = <String, int>{};
+    for (final group in _visibleGroups) {
+      if (!selectedKeys.contains(group.key)) continue;
+      layers[group.key] = group.defaultVelocityLayer.clamp(1, 32).toInt();
+    }
+    return layers;
+  }
+
+  Map<String, int> _explicitTagVelocityLayers() {
+    return {
+      for (final entry in _tagVelocityLayers.entries)
+        if (_selectedTagKeys.contains(entry.key) &&
+            _editedTagVelocityKeys.contains(entry.key))
+          entry.key: entry.value,
+    };
+  }
+
+  Map<String, int> _explicitTagRoundRobins() {
+    return {
+      for (final entry in _tagRoundRobins.entries)
+        if (_selectedTagKeys.contains(entry.key) &&
+            _editedTagRoundRobinKeys.contains(entry.key))
+          entry.key: entry.value,
+    };
+  }
+
+  Map<String, DecentSamplerTagKeyRange> _explicitTagKeyRanges() {
+    return {
+      for (final entry in _tagKeyRanges.entries)
+        if (_selectedTagKeys.contains(entry.key) &&
+            _editedTagRangeKeys.contains(entry.key))
+          entry.key: entry.value,
+    };
+  }
+
+  Map<String, int> _explicitGroupVelocityLayers() {
+    return {
+      for (final entry in _groupVelocityLayers.entries)
+        if (_selectedGroupKeys.contains(entry.key) &&
+            _editedGroupVelocityKeys.contains(entry.key))
+          entry.key: entry.value,
+    };
+  }
+
+  Map<String, int> _explicitGroupRoundRobins() {
+    return {
+      for (final entry in _groupRoundRobins.entries)
+        if (_selectedGroupKeys.contains(entry.key) &&
+            _editedGroupRoundRobinKeys.contains(entry.key))
+          entry.key: entry.value,
+    };
+  }
+
+  Map<String, DecentSamplerTagKeyRange> _explicitGroupKeyRanges() {
+    return {
+      for (final entry in _groupKeyRanges.entries)
+        if (_selectedGroupKeys.contains(entry.key) &&
+            _editedGroupRangeKeys.contains(entry.key))
+          entry.key: entry.value,
+    };
+  }
+
+  Map<String, DecentSamplerTagKeyRange> _defaultTagKeyRanges(
+    Set<String> selectedKeys,
+  ) {
+    final selectedTags = [
+      for (final tag in _visibleTags)
+        if (selectedKeys.contains(tag.key)) tag,
+    ];
+    if (selectedTags.isEmpty) return {};
+    return {
+      for (var index = 0; index < selectedTags.length; index++)
+        selectedTags[index].key: DecentSamplerTagKeyRange(
+          lowMidi: selectedTags[index].defaultLowMidi,
+          rootMidi: selectedTags[index].defaultRootMidi,
+          highMidi: selectedTags[index].defaultHighMidi,
+        ),
+    };
+  }
+
+  Map<String, int> _defaultTagRoundRobins(Set<String> selectedKeys) {
+    return {
+      for (final tag in _visibleTags)
+        if (selectedKeys.contains(tag.key)) tag.key: 1,
+    };
+  }
+
+  Map<String, DecentSamplerTagKeyRange> _defaultGroupKeyRanges(
+    Set<String> selectedKeys,
+  ) {
+    return {
+      for (final group in _visibleGroups)
+        if (selectedKeys.contains(group.key))
+          group.key: DecentSamplerTagKeyRange(
+            lowMidi: group.defaultLowMidi,
+            rootMidi: group.defaultRootMidi,
+            highMidi: group.defaultHighMidi,
+          ),
+    };
+  }
+
+  Map<String, int> _defaultGroupRoundRobins(Set<String> selectedKeys) {
+    return {
+      for (final group in _visibleGroups)
+        if (selectedKeys.contains(group.key)) group.key: 1,
+    };
+  }
+
+  Set<String> _defaultSelectedTagKeys(
+    List<DecentSamplerTag> tags,
+    List<DecentSamplerGroupInfo> groups,
+  ) {
+    if (tags.isEmpty) return {};
+    final totalSamples = groups.fold<int>(
+      0,
+      (total, group) => total + group.sampleCount,
+    );
+    final preferredLayerKeys = _preferredDefaultLayerKeys(tags, totalSamples);
+    if (preferredLayerKeys.isNotEmpty) return preferredLayerKeys;
+    final candidates =
+        [
+          _tagAxisCandidate(tags, groups, totalSamples, 'instrument', {
+            DecentSamplerTagRole.instrument,
+            DecentSamplerTagRole.group,
+          }),
+          _tagAxisCandidate(tags, groups, totalSamples, 'articulation', {
+            DecentSamplerTagRole.articulation,
+          }),
+          _tagAxisCandidate(tags, groups, totalSamples, 'dynamic', {
+            DecentSamplerTagRole.dynamic,
+          }),
+          _tagAxisCandidate(tags, groups, totalSamples, 'layer', {
+            DecentSamplerTagRole.layer,
+          }),
+        ].whereType<_TagAxisCandidate>().toList()..sort((a, b) {
+          final score = b.score.compareTo(a.score);
+          return score != 0 ? score : a.name.compareTo(b.name);
+        });
+    if (candidates.isNotEmpty) return candidates.first.keys;
+    return {
+      for (final tag in tags)
+        if (totalSamples == 0 || tag.sampleCount < totalSamples) tag.key,
+    };
+  }
+
+  Set<String> _preferredDefaultLayerKeys(
+    List<DecentSamplerTag> tags,
+    int totalSamples,
+  ) {
+    final layerTags = tags.where((tag) {
+      return tag.role == DecentSamplerTagRole.layer &&
+          (totalSamples == 0 || tag.sampleCount < totalSamples);
+    }).toList();
+    if (layerTags.length < 2) return {};
+
+    final preferred = layerTags
+        .where((tag) => _isPreferredBaseLayerLabel(tag.label))
+        .toList();
+    if (preferred.isEmpty) return {};
+
+    preferred.sort((a, b) {
+      final rank = _baseLayerRank(a.label).compareTo(_baseLayerRank(b.label));
+      if (rank != 0) return rank;
+      final countCompare = b.sampleCount.compareTo(a.sampleCount);
+      if (countCompare != 0) return countCompare;
+      return a.label.toLowerCase().compareTo(b.label.toLowerCase());
+    });
+    return {preferred.first.key};
+  }
+
+  _TagAxisCandidate? _tagAxisCandidate(
+    List<DecentSamplerTag> tags,
+    List<DecentSamplerGroupInfo> groups,
+    int totalSamples,
+    String name,
+    Set<DecentSamplerTagRole> roles,
+  ) {
+    final matchingTags = tags.where((tag) {
+      if (!roles.contains(tag.role)) return false;
+      return totalSamples == 0 || tag.sampleCount < totalSamples;
+    }).toList();
+    if (matchingTags.isEmpty) return null;
+    final keys = {for (final tag in matchingTags) tag.key};
+    final coveredGroups = <String>{};
+    var coveredSamples = 0;
+    for (final tag in matchingTags) {
+      coveredGroups.addAll(tag.groupKeys);
+      coveredSamples += tag.sampleCount;
+    }
+    final coverage = totalSamples == 0
+        ? 0.0
+        : math.min(1.0, coveredSamples / totalSamples);
+    final groupCoverage = groups.isEmpty
+        ? 0.0
+        : coveredGroups.length / groups.length;
+    final countScore = math.min(matchingTags.length, 12) / 12.0;
+    final roleWeight = switch (name) {
+      'instrument' => 1.0,
+      'articulation' => 0.92,
+      'dynamic' => 0.82,
+      'layer' => 0.45,
+      _ => 0.3,
+    };
+    final score =
+        roleWeight + (coverage * 0.8) + (groupCoverage * 0.5) + countScore;
+    return _TagAxisCandidate(name: name, keys: keys, score: score);
+  }
+}
+
+bool _isPreferredBaseLayerLabel(String label) {
+  return _baseLayerRank(label) < 100;
+}
+
+int _baseLayerRank(String label) {
+  final key = label.trim().toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '');
+  return switch (key) {
+    'raw' => 0,
+    'original' => 1,
+    'orig' => 1,
+    'natural' => 2,
+    'clean' => 3,
+    'dry' => 4,
+    'drysig' => 4,
+    'direct' => 5,
+    'di' => 5,
+    'close' => 6,
+    'front' => 7,
+    'mono' => 8,
+    'stereo' => 9,
+    'tron' => 10,
+    _ => 100,
+  };
+}
+
+class _TagAxisCandidate {
+  const _TagAxisCandidate({
+    required this.name,
+    required this.keys,
+    required this.score,
+  });
+
+  final String name;
+  final Set<String> keys;
+  final double score;
 }
 
 class _DecentImportSummaryPanel extends StatelessWidget {
@@ -987,12 +1814,19 @@ class _DecentImportSummaryPanel extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('What this looks like', style: theme.textTheme.titleSmall),
+            Text(
+              'Detected Decent structure',
+              style: theme.textTheme.titleSmall,
+            ),
             const SizedBox(height: 8),
-            _SummaryBullet('${facts.groupCount} groups'),
+            if (facts.presetCount > 1)
+              _SummaryBullet('${facts.presetCount} presets'),
             _SummaryBullet('${facts.sampleCount} samples'),
+            if (facts.tagCount > 0)
+              _SummaryBullet('${facts.tagCount} tag choices'),
+            _SummaryBullet('${facts.groupCount} XML groups'),
             _SummaryBullet(
-              '${facts.labelledGroupCount} labelled group/layer names',
+              '${facts.labelledGroupCount} labelled XML group names',
             ),
             _SummaryBullet('${facts.roundRobinCount} round robins'),
             _SummaryBullet(
@@ -1016,6 +1850,951 @@ class _DecentImportSummaryPanel extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PresetSelectionPanel extends StatelessWidget {
+  const _PresetSelectionPanel({
+    required this.presets,
+    required this.selectedName,
+    required this.onSelected,
+  });
+
+  final List<DecentSamplerPresetInfo> presets;
+  final String? selectedName;
+  final ValueChanged<String> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text('Presets', style: theme.textTheme.titleSmall),
+            const SizedBox(width: 8),
+            Text(
+              presets.length == 1 ? '1 preset' : 'choose one for this folder',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final preset in presets)
+              ChoiceChip(
+                selected: selectedName == preset.name,
+                label: Text('${preset.name} · ${preset.sampleCount}'),
+                tooltip:
+                    '${preset.groupCount} group(s), ${preset.tagCount} tag(s)',
+                onSelected: (_) => onSelected(preset.name),
+              ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _MappingAxisPanel extends StatelessWidget {
+  const _MappingAxisPanel({required this.axis, required this.onChanged});
+
+  final _DecentMappingAxis axis;
+  final ValueChanged<_DecentMappingAxis> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: 8,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        Text('Use', style: Theme.of(context).textTheme.titleSmall),
+        ChoiceChip(
+          selected: axis == _DecentMappingAxis.tags,
+          label: const Text('Tags'),
+          onSelected: (_) => onChanged(_DecentMappingAxis.tags),
+        ),
+        ChoiceChip(
+          selected: axis == _DecentMappingAxis.groups,
+          label: const Text('Groups'),
+          onSelected: (_) => onChanged(_DecentMappingAxis.groups),
+        ),
+      ],
+    );
+  }
+}
+
+class _DecentQuickMappingPanel extends StatelessWidget {
+  const _DecentQuickMappingPanel({
+    required this.mode,
+    required this.rootMidi,
+    required this.velocityLayer,
+    required this.onModeChanged,
+    required this.onRootChanged,
+    required this.onVelocityChanged,
+  });
+
+  final _DecentQuickMapping mode;
+  final int rootMidi;
+  final int velocityLayer;
+  final ValueChanged<_DecentQuickMapping> onModeChanged;
+  final ValueChanged<int> onRootChanged;
+  final ValueChanged<int> onVelocityChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        border: Border.all(color: theme.colorScheme.outlineVariant),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(10),
+        child: Wrap(
+          spacing: 10,
+          runSpacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            Text('Mapping', style: theme.textTheme.titleSmall),
+            ChoiceChip(
+              selected: mode == _DecentQuickMapping.keepXml,
+              label: const Text('Keep Decent map'),
+              onSelected: (_) => onModeChanged(_DecentQuickMapping.keepXml),
+            ),
+            ChoiceChip(
+              selected: mode == _DecentQuickMapping.chromatic,
+              label: const Text('Chromatic'),
+              onSelected: (_) => onModeChanged(_DecentQuickMapping.chromatic),
+            ),
+            ChoiceChip(
+              selected: mode == _DecentQuickMapping.velocityLayers,
+              label: const Text('Velocity layers'),
+              onSelected: (_) =>
+                  onModeChanged(_DecentQuickMapping.velocityLayers),
+            ),
+            ChoiceChip(
+              selected: mode == _DecentQuickMapping.roundRobins,
+              label: const Text('Round robins'),
+              onSelected: (_) => onModeChanged(_DecentQuickMapping.roundRobins),
+            ),
+            ChoiceChip(
+              selected: mode == _DecentQuickMapping.unmapped,
+              label: const Text('Add unmapped'),
+              onSelected: (_) => onModeChanged(_DecentQuickMapping.unmapped),
+            ),
+            if (mode == _DecentQuickMapping.chromatic) ...[
+              SizedBox(
+                width: 130,
+                child: _SampleNoteStepper(
+                  label: 'Root start',
+                  value: rootMidi,
+                  onChanged: onRootChanged,
+                ),
+              ),
+              SizedBox(
+                width: 120,
+                child: _SampleNumberStepper(
+                  label: 'Vel',
+                  value: velocityLayer,
+                  min: 1,
+                  max: 32,
+                  onChanged: onVelocityChanged,
+                ),
+              ),
+            ],
+            SizedBox(
+              width: 260,
+              child: Text(
+                switch (mode) {
+                  _DecentQuickMapping.keepXml =>
+                    'Show the Decent XML map as Low, Root, Vel, and RR. Row notes warn when Disting cannot reproduce a Decent layer/control.',
+                  _DecentQuickMapping.chromatic =>
+                    'Place selected items one per key from the root start.',
+                  _DecentQuickMapping.velocityLayers =>
+                    'Set selected rows to Vel 1, Vel 2... Edit rows as needed.',
+                  _DecentQuickMapping.roundRobins =>
+                    'Set selected rows to RR1, RR2... Edit rows as needed.',
+                  _DecentQuickMapping.unmapped =>
+                    'Add selected source samples to the editor for manual mapping.',
+                },
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TagSelectionPanel extends StatelessWidget {
+  const _TagSelectionPanel({
+    required this.tags,
+    required this.selectedKeys,
+    required this.velocityAssignments,
+    required this.rangeAssignments,
+    required this.roundRobinAssignments,
+    required this.editedVelocityKeys,
+    required this.editedRangeKeys,
+    required this.editedRoundRobinKeys,
+    required this.customMapping,
+    required this.mappingMode,
+    required this.previewingKey,
+    required this.previewBusy,
+    required this.onToggle,
+    required this.onPreview,
+    required this.onVelocityChanged,
+    required this.onRangeChanged,
+    required this.onRoundRobinChanged,
+    required this.onSelectAll,
+    required this.onClear,
+  });
+
+  final List<DecentSamplerTag> tags;
+  final Set<String> selectedKeys;
+  final Map<String, int> velocityAssignments;
+  final Map<String, DecentSamplerTagKeyRange> rangeAssignments;
+  final Map<String, int> roundRobinAssignments;
+  final Set<String> editedVelocityKeys;
+  final Set<String> editedRangeKeys;
+  final Set<String> editedRoundRobinKeys;
+  final bool customMapping;
+  final _DecentQuickMapping mappingMode;
+  final String? previewingKey;
+  final bool previewBusy;
+  final ValueChanged<String> onToggle;
+  final ValueChanged<DecentSamplerTag> onPreview;
+  final void Function(String tagKey, int layer) onVelocityChanged;
+  final void Function(String tagKey, DecentSamplerTagKeyRange range)
+  onRangeChanged;
+  final void Function(String tagKey, int roundRobin) onRoundRobinChanged;
+  final VoidCallback onSelectAll;
+  final VoidCallback onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final selectedCount = tags
+        .where((tag) => selectedKeys.contains(tag.key))
+        .length;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text('Tags', style: theme.textTheme.titleSmall),
+            const SizedBox(width: 8),
+            Text(
+              '$selectedCount/${tags.length} selected',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const Spacer(),
+            TextButton(onPressed: onSelectAll, child: const Text('Select all')),
+            TextButton(onPressed: onClear, child: const Text('Clear')),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Text(
+          customMapping
+              ? 'Tags are labels from the Decent file. Select the sounds you want, then edit Low, Root, Vel, or RR on any row you want to override.'
+              : 'Tags are labels from the Decent file. Checked tags will be imported; unchecked tags were left out because they look like a different kind of label.',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(height: 6),
+        DecoratedBox(
+          decoration: BoxDecoration(
+            border: Border.all(color: theme.colorScheme.outlineVariant),
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Column(
+            children: [
+              for (var index = 0; index < tags.length; index++)
+                _TagCheckboxRow(
+                  tag: tags[index],
+                  selected: selectedKeys.contains(tags[index].key),
+                  note: _tagSelectionNote(
+                    tags[index],
+                    selected: selectedKeys.contains(tags[index].key),
+                    mappingMode: mappingMode,
+                  ),
+                  velocityEdited: editedVelocityKeys.contains(tags[index].key),
+                  rangeEdited: editedRangeKeys.contains(tags[index].key),
+                  roundRobinEdited: editedRoundRobinKeys.contains(
+                    tags[index].key,
+                  ),
+                  customMapping: customMapping,
+                  previewing: previewingKey == 'tag:${tags[index].key}',
+                  previewBusy: previewBusy,
+                  velocityLayer: velocityAssignments[tags[index].key] ?? 1,
+                  roundRobin: roundRobinAssignments[tags[index].key] ?? 1,
+                  range:
+                      rangeAssignments[tags[index].key] ??
+                      const DecentSamplerTagKeyRange(
+                        lowMidi: 36,
+                        rootMidi: 36,
+                        highMidi: 47,
+                      ),
+                  showDivider: index < tags.length - 1,
+                  onTap: () => onToggle(tags[index].key),
+                  onPreview: () => onPreview(tags[index]),
+                  onVelocityChanged: (value) =>
+                      onVelocityChanged(tags[index].key, value),
+                  onRangeChanged: (range) =>
+                      onRangeChanged(tags[index].key, range),
+                  onRoundRobinChanged: (value) =>
+                      onRoundRobinChanged(tags[index].key, value),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  static String _tagSelectionNote(
+    DecentSamplerTag tag, {
+    required bool selected,
+    required _DecentQuickMapping mappingMode,
+  }) {
+    final shortRole = _tagShortRoleLabel(tag.role);
+    if (!selected) {
+      return 'Not included: $shortRole';
+    }
+    if (mappingMode == _DecentQuickMapping.unmapped) {
+      return 'Will be added unmapped';
+    }
+    if (mappingMode == _DecentQuickMapping.keepXml) {
+      return _tagKeepXmlNote(tag);
+    }
+    if (mappingMode == _DecentQuickMapping.chromatic) {
+      return 'Mapped chromatically; edit row to override';
+    }
+    if (mappingMode == _DecentQuickMapping.velocityLayers) {
+      return 'Mapped as a velocity layer; edit Vel if needed';
+    }
+    if (mappingMode == _DecentQuickMapping.roundRobins) {
+      return 'Mapped as a round robin; edit RR if needed';
+    }
+    if (tag.role == DecentSamplerTagRole.layer) {
+      final base = _isPreferredBaseLayerLabel(tag.label);
+      if (base) {
+        return 'Included: main source';
+      }
+      return 'Included: source/mic layer';
+    }
+    return 'Included: $shortRole';
+  }
+
+  static String _tagKeepXmlNote(DecentSamplerTag tag) {
+    final notes = <String>[];
+    if (tag.velocitySummary != 'No explicit velocity ranges') {
+      notes.add('XML velocity kept');
+    }
+    if (tag.roundRobinSummary != 'No seqPosition') {
+      notes.add('XML RR kept');
+    }
+    if (tag.role == DecentSamplerTagRole.layer) {
+      notes.add('source/mic layer is fixed');
+    } else if (tag.role == DecentSamplerTagRole.articulation) {
+      notes.add('Decent switching may not translate');
+    }
+    if (notes.isEmpty) return 'XML map kept; edit row to override';
+    return notes.join(' · ');
+  }
+}
+
+String _tagShortRoleLabel(DecentSamplerTagRole role) {
+  return switch (role) {
+    DecentSamplerTagRole.instrument => 'instrument',
+    DecentSamplerTagRole.articulation => 'playing style',
+    DecentSamplerTagRole.layer => 'source/mic layer',
+    DecentSamplerTagRole.dynamic => 'loudness layer',
+    DecentSamplerTagRole.roundRobin => 'round robin',
+    DecentSamplerTagRole.group => 'Decent label',
+  };
+}
+
+class _GroupMappingPanel extends StatelessWidget {
+  const _GroupMappingPanel({
+    required this.groups,
+    required this.selectedKeys,
+    required this.velocityAssignments,
+    required this.rangeAssignments,
+    required this.roundRobinAssignments,
+    required this.editedVelocityKeys,
+    required this.editedRangeKeys,
+    required this.editedRoundRobinKeys,
+    required this.customMapping,
+    required this.mappingMode,
+    required this.previewingKey,
+    required this.previewBusy,
+    required this.onToggle,
+    required this.onPreview,
+    required this.onVelocityChanged,
+    required this.onRangeChanged,
+    required this.onRoundRobinChanged,
+    required this.onSelectAll,
+    required this.onClear,
+  });
+
+  final List<DecentSamplerGroupInfo> groups;
+  final Set<String> selectedKeys;
+  final Map<String, int> velocityAssignments;
+  final Map<String, DecentSamplerTagKeyRange> rangeAssignments;
+  final Map<String, int> roundRobinAssignments;
+  final Set<String> editedVelocityKeys;
+  final Set<String> editedRangeKeys;
+  final Set<String> editedRoundRobinKeys;
+  final bool customMapping;
+  final _DecentQuickMapping mappingMode;
+  final String? previewingKey;
+  final bool previewBusy;
+  final ValueChanged<String> onToggle;
+  final ValueChanged<DecentSamplerGroupInfo> onPreview;
+  final void Function(String groupKey, int layer) onVelocityChanged;
+  final void Function(String groupKey, DecentSamplerTagKeyRange range)
+  onRangeChanged;
+  final void Function(String groupKey, int roundRobin) onRoundRobinChanged;
+  final VoidCallback onSelectAll;
+  final VoidCallback onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final selectedCount = groups
+        .where((group) => selectedKeys.contains(group.key))
+        .length;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text('Groups', style: theme.textTheme.titleSmall),
+            const SizedBox(width: 8),
+            Text(
+              '$selectedCount/${groups.length} selected',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const Spacer(),
+            TextButton(onPressed: onSelectAll, child: const Text('Select all')),
+            TextButton(onPressed: onClear, child: const Text('Clear')),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Text(
+          customMapping
+              ? 'Groups are Decent\'s internal sample sections. Select the sections you want, then edit Low, Root, Vel, or RR on any row you want to override.'
+              : 'Groups are Decent\'s internal sample sections. Select the sections to include.',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(height: 6),
+        DecoratedBox(
+          decoration: BoxDecoration(
+            border: Border.all(color: theme.colorScheme.outlineVariant),
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Column(
+            children: [
+              for (var index = 0; index < groups.length; index++)
+                _GroupMappingRow(
+                  group: groups[index],
+                  selected: selectedKeys.contains(groups[index].key),
+                  note: _groupSelectionNote(
+                    groups[index],
+                    selected: selectedKeys.contains(groups[index].key),
+                    mappingMode: mappingMode,
+                  ),
+                  velocityEdited: editedVelocityKeys.contains(
+                    groups[index].key,
+                  ),
+                  rangeEdited: editedRangeKeys.contains(groups[index].key),
+                  roundRobinEdited: editedRoundRobinKeys.contains(
+                    groups[index].key,
+                  ),
+                  customMapping: customMapping,
+                  previewing: previewingKey == 'group:${groups[index].key}',
+                  previewBusy: previewBusy,
+                  velocityLayer: velocityAssignments[groups[index].key] ?? 1,
+                  roundRobin: roundRobinAssignments[groups[index].key] ?? 1,
+                  range:
+                      rangeAssignments[groups[index].key] ??
+                      DecentSamplerTagKeyRange(
+                        lowMidi: groups[index].defaultLowMidi,
+                        rootMidi: groups[index].defaultRootMidi,
+                        highMidi: groups[index].defaultHighMidi,
+                      ),
+                  showDivider: index < groups.length - 1,
+                  onTap: () => onToggle(groups[index].key),
+                  onPreview: () => onPreview(groups[index]),
+                  onVelocityChanged: (value) =>
+                      onVelocityChanged(groups[index].key, value),
+                  onRangeChanged: (range) =>
+                      onRangeChanged(groups[index].key, range),
+                  onRoundRobinChanged: (value) =>
+                      onRoundRobinChanged(groups[index].key, value),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  static String _groupSelectionNote(
+    DecentSamplerGroupInfo group, {
+    required bool selected,
+    required _DecentQuickMapping mappingMode,
+  }) {
+    if (!selected) return 'Not included';
+    if (mappingMode == _DecentQuickMapping.unmapped) {
+      return 'Will be added unmapped';
+    }
+    if (mappingMode == _DecentQuickMapping.chromatic) {
+      return 'Mapped chromatically; edit row to override';
+    }
+    if (mappingMode == _DecentQuickMapping.velocityLayers) {
+      return 'Mapped as a velocity layer; edit Vel if needed';
+    }
+    if (mappingMode == _DecentQuickMapping.roundRobins) {
+      return 'Mapped as a round robin; edit RR if needed';
+    }
+
+    final notes = <String>[];
+    if (group.velocitySummary != 'No explicit velocity ranges') {
+      notes.add('XML velocity kept');
+    }
+    if (group.roundRobinSummary != 'No seqPosition') {
+      notes.add('XML RR kept');
+    }
+    if (_groupHasDecentOnlyControls(group)) {
+      notes.add('Decent controls may not translate');
+    }
+    if (notes.isEmpty) return 'XML map kept; edit row to override';
+    return notes.join(' · ');
+  }
+
+  static bool _groupHasDecentOnlyControls(DecentSamplerGroupInfo group) {
+    final summary = group.xmlSummary.toLowerCase();
+    return summary.contains('volume=') ||
+        summary.contains('pan=') ||
+        summary.contains('silencedbytags=') ||
+        summary.contains('silencingmode=') ||
+        summary.contains('tags=');
+  }
+}
+
+class _DecentChoicePreviewButton extends StatelessWidget {
+  const _DecentChoicePreviewButton({
+    required this.previewing,
+    required this.previewBusy,
+    required this.onPressed,
+  });
+
+  final bool previewing;
+  final bool previewBusy;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      tooltip: previewing ? 'Stop preview' : 'Preview',
+      visualDensity: VisualDensity.compact,
+      constraints: const BoxConstraints.tightFor(width: 36, height: 36),
+      onPressed: previewBusy ? null : onPressed,
+      icon: Icon(previewing ? Icons.stop : Icons.play_arrow),
+    );
+  }
+}
+
+class _GroupMappingRow extends StatelessWidget {
+  const _GroupMappingRow({
+    required this.group,
+    required this.selected,
+    required this.note,
+    required this.velocityEdited,
+    required this.rangeEdited,
+    required this.roundRobinEdited,
+    required this.customMapping,
+    required this.previewing,
+    required this.previewBusy,
+    required this.velocityLayer,
+    required this.roundRobin,
+    required this.range,
+    required this.showDivider,
+    required this.onTap,
+    required this.onPreview,
+    required this.onVelocityChanged,
+    required this.onRangeChanged,
+    required this.onRoundRobinChanged,
+  });
+
+  final DecentSamplerGroupInfo group;
+  final bool selected;
+  final String note;
+  final bool velocityEdited;
+  final bool rangeEdited;
+  final bool roundRobinEdited;
+  final bool customMapping;
+  final bool previewing;
+  final bool previewBusy;
+  final int velocityLayer;
+  final int roundRobin;
+  final DecentSamplerTagKeyRange range;
+  final bool showDivider;
+  final VoidCallback onTap;
+  final VoidCallback onPreview;
+  final ValueChanged<int> onVelocityChanged;
+  final ValueChanged<DecentSamplerTagKeyRange> onRangeChanged;
+  final ValueChanged<int> onRoundRobinChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final low = range.lowMidi.clamp(0, 127).toInt();
+    final high = range.highMidi.clamp(low, 127).toInt();
+    final root = range.rootMidi.clamp(low, high).toInt();
+    final normalized = DecentSamplerTagKeyRange(
+      lowMidi: low,
+      rootMidi: root,
+      highMidi: high,
+    );
+    return InkWell(
+      onTap: onTap,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          border: showDivider
+              ? Border(
+                  bottom: BorderSide(color: theme.colorScheme.outlineVariant),
+                )
+              : null,
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          child: Row(
+            children: [
+              Checkbox(value: selected, onChanged: (_) => onTap()),
+              _DecentChoicePreviewButton(
+                previewing: previewing,
+                previewBusy: previewBusy,
+                onPressed: onPreview,
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      group.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodyMedium,
+                    ),
+                    const SizedBox(height: 2),
+                    Tooltip(
+                      message:
+                          '$note\nXML: ${group.noteRange}; ${group.velocitySummary}; ${group.roundRobinSummary}; ${group.xmlSummary}',
+                      child: Text(
+                        note,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: selected
+                              ? theme.colorScheme.onSurfaceVariant
+                              : theme.colorScheme.onSurfaceVariant.withValues(
+                                  alpha: 0.78,
+                                ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                '${group.sampleCount}',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+              if (customMapping) ...[
+                const SizedBox(width: 12),
+                SizedBox(
+                  width: 120,
+                  child: _SampleNoteStepper(
+                    label: 'Low',
+                    value: normalized.lowMidi,
+                    onChanged: selected
+                        ? (value) => onRangeChanged(
+                            DecentSamplerTagKeyRange(
+                              lowMidi: value
+                                  .clamp(0, normalized.rootMidi)
+                                  .toInt(),
+                              rootMidi: normalized.rootMidi,
+                              highMidi: normalized.highMidi,
+                            ),
+                          )
+                        : null,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                SizedBox(
+                  width: 120,
+                  child: _SampleNoteStepper(
+                    label: 'Root',
+                    value: normalized.rootMidi,
+                    min: normalized.lowMidi,
+                    max: normalized.highMidi,
+                    onChanged: selected
+                        ? (value) => onRangeChanged(
+                            DecentSamplerTagKeyRange(
+                              lowMidi: normalized.lowMidi,
+                              rootMidi: value
+                                  .clamp(
+                                    normalized.lowMidi,
+                                    normalized.highMidi,
+                                  )
+                                  .toInt(),
+                              highMidi: normalized.highMidi,
+                            ),
+                          )
+                        : null,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                SizedBox(
+                  width: 120,
+                  child: _SampleNumberStepper(
+                    label: 'Vel',
+                    value: velocityLayer.clamp(1, 32).toInt(),
+                    min: 1,
+                    max: 32,
+                    onChanged: selected ? onVelocityChanged : (_) {},
+                  ),
+                ),
+                const SizedBox(width: 6),
+                SizedBox(
+                  width: 120,
+                  child: _SampleNumberStepper(
+                    label: 'RR',
+                    value: roundRobin.clamp(1, 32).toInt(),
+                    min: 1,
+                    max: 32,
+                    onChanged: selected ? onRoundRobinChanged : (_) {},
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TagCheckboxRow extends StatelessWidget {
+  const _TagCheckboxRow({
+    required this.tag,
+    required this.selected,
+    required this.note,
+    required this.velocityEdited,
+    required this.rangeEdited,
+    required this.roundRobinEdited,
+    required this.customMapping,
+    required this.previewing,
+    required this.previewBusy,
+    required this.velocityLayer,
+    required this.roundRobin,
+    required this.range,
+    required this.showDivider,
+    required this.onTap,
+    required this.onPreview,
+    required this.onVelocityChanged,
+    required this.onRangeChanged,
+    required this.onRoundRobinChanged,
+  });
+
+  final DecentSamplerTag tag;
+  final bool selected;
+  final String note;
+  final bool velocityEdited;
+  final bool rangeEdited;
+  final bool roundRobinEdited;
+  final bool customMapping;
+  final bool previewing;
+  final bool previewBusy;
+  final int velocityLayer;
+  final int roundRobin;
+  final DecentSamplerTagKeyRange range;
+  final bool showDivider;
+  final VoidCallback onTap;
+  final VoidCallback onPreview;
+  final ValueChanged<int> onVelocityChanged;
+  final ValueChanged<DecentSamplerTagKeyRange> onRangeChanged;
+  final ValueChanged<int> onRoundRobinChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final low = range.lowMidi.clamp(0, 127).toInt();
+    final high = range.highMidi.clamp(low, 127).toInt();
+    final root = range.rootMidi.clamp(low, high).toInt();
+    final normalized = DecentSamplerTagKeyRange(
+      lowMidi: low,
+      rootMidi: root,
+      highMidi: high,
+    );
+    return InkWell(
+      onTap: onTap,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          border: showDivider
+              ? Border(
+                  bottom: BorderSide(color: theme.colorScheme.outlineVariant),
+                )
+              : null,
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          child: Row(
+            children: [
+              Checkbox(value: selected, onChanged: (_) => onTap()),
+              _DecentChoicePreviewButton(
+                previewing: previewing,
+                previewBusy: previewBusy,
+                onPressed: onPreview,
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      tag.label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodyMedium,
+                    ),
+                    const SizedBox(height: 2),
+                    Tooltip(
+                      message:
+                          '$note\nXML summary: ${tag.noteRange}; '
+                          '${tag.velocitySummary}; ${tag.roundRobinSummary}\n'
+                          'Override row: Low ${PolyMultisampleParser.midiToNoteName(normalized.lowMidi)}, '
+                          'Root ${PolyMultisampleParser.midiToNoteName(normalized.rootMidi)}, '
+                          'Vel $velocityLayer, RR $roundRobin\n'
+                          'Evidence: ${tag.evidence}\nRole: ${_tagShortRoleLabel(tag.role)}',
+                      child: Text(
+                        note,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: selected
+                              ? theme.colorScheme.onSurfaceVariant
+                              : theme.colorScheme.onSurfaceVariant.withValues(
+                                  alpha: 0.78,
+                                ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                '${tag.sampleCount}',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+              if (customMapping) ...[
+                const SizedBox(width: 12),
+                SizedBox(
+                  width: 120,
+                  child: _SampleNoteStepper(
+                    label: 'Low',
+                    value: normalized.lowMidi,
+                    onChanged: selected
+                        ? (value) => onRangeChanged(
+                            DecentSamplerTagKeyRange(
+                              lowMidi: value
+                                  .clamp(0, normalized.rootMidi)
+                                  .toInt(),
+                              rootMidi: normalized.rootMidi,
+                              highMidi: normalized.highMidi,
+                            ),
+                          )
+                        : null,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                SizedBox(
+                  width: 120,
+                  child: _SampleNoteStepper(
+                    label: 'Root',
+                    value: normalized.rootMidi,
+                    min: normalized.lowMidi,
+                    max: normalized.highMidi,
+                    onChanged: selected
+                        ? (value) => onRangeChanged(
+                            DecentSamplerTagKeyRange(
+                              lowMidi: normalized.lowMidi,
+                              rootMidi: value
+                                  .clamp(
+                                    normalized.lowMidi,
+                                    normalized.highMidi,
+                                  )
+                                  .toInt(),
+                              highMidi: normalized.highMidi,
+                            ),
+                          )
+                        : null,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                SizedBox(
+                  width: 120,
+                  child: _SampleNumberStepper(
+                    label: 'Vel',
+                    value: velocityLayer.clamp(1, 32).toInt(),
+                    min: 1,
+                    max: 32,
+                    onChanged: selected ? onVelocityChanged : (_) {},
+                  ),
+                ),
+                const SizedBox(width: 6),
+                SizedBox(
+                  width: 120,
+                  child: _SampleNumberStepper(
+                    label: 'RR',
+                    value: roundRobin.clamp(1, 32).toInt(),
+                    min: 1,
+                    max: 32,
+                    onChanged: selected ? onRoundRobinChanged : (_) {},
+                  ),
+                ),
+              ],
+            ],
+          ),
         ),
       ),
     );
@@ -1053,8 +2832,10 @@ class _SummaryBullet extends StatelessWidget {
 
 class _DecentImportFacts {
   const _DecentImportFacts({
+    required this.presetCount,
     required this.groupCount,
     required this.sampleCount,
+    required this.tagCount,
     required this.labelledGroupCount,
     required this.roundRobinCount,
     required this.velocityRangeCount,
@@ -1063,8 +2844,10 @@ class _DecentImportFacts {
     required this.recommendation,
   });
 
+  final int presetCount;
   final int groupCount;
   final int sampleCount;
+  final int tagCount;
   final int labelledGroupCount;
   final int roundRobinCount;
   final int velocityRangeCount;
@@ -1108,35 +2891,65 @@ class _DecentImportFacts {
         summary.contains('CONTROL') || summary.contains('BIND');
     final controllerSummary = hasControllerBindings
         ? controllerLabels.isEmpty
-              ? 'UI/controller bindings present'
-              : 'lots of UI/controller bindings, especially ${controllerLabels.join('/')}'
+              ? 'Decent UI/controller bindings present'
+              : 'Decent UI/controller bindings: ${controllerLabels.join('/')}'
         : '';
 
+    final hasPresetChoices = analysis.presets.length > 1;
+    final hasTags = analysis.tags.isNotEmpty;
     final recommendation = switch (analysis.recommendedGroupHandling) {
       DecentSamplerGroupHandling.splitFolders =>
-        'Recommended: split groups into separate folders.',
+        hasTags
+            ? 'Suggested: choose one tag if you want a single variant, or keep the selected tags together.'
+            : 'Suggested: choose one XML group if only one group should become this folder.',
       DecentSamplerGroupHandling.velocityLayers =>
-        'Recommended: use groups as velocity layers.',
+        hasTags
+            ? 'Suggested: map selected dynamic tags as velocity layers.'
+            : 'Suggested: map matched XML groups as velocity layers.',
+      DecentSamplerGroupHandling.tagMapping =>
+        'Suggested: map selected tags to velocity layers and/or key ranges.',
+      DecentSamplerGroupHandling.keyRanges =>
+        'Suggested: map selected tags to key ranges.',
       DecentSamplerGroupHandling.selectedGroup =>
-        'Recommended: convert one group only.',
+        'Suggested: convert one XML group only.',
+      DecentSamplerGroupHandling.selectedTags =>
+        'Suggested: stage one selected tag as this folder.',
       DecentSamplerGroupHandling.auto =>
-        'Recommended: keep the default parser mapping.',
+        hasTags
+            ? 'Suggested: keep the selected tags with default XML mapping.'
+            : hasPresetChoices
+            ? 'Suggested: choose one preset and keep its default XML mapping.'
+            : 'Suggested: keep the default XML mapping.',
     };
 
-    final interpretation = hasControllerBindings
-        ? 'This looks like a library with articulations/options or controller-mixed layers. A single Disting NT Poly Multisample folder cannot reproduce Decent Sampler UI controls directly.'
+    final interpretation = hasPresetChoices
+        ? 'This library contains multiple Decent presets. This builder stages one Poly Multisample folder, so choose one preset to work on.'
+        : hasTags &&
+              analysis.recommendedGroupHandling ==
+                  DecentSamplerGroupHandling.velocityLayers
+        ? 'The selected tags look like matched dynamic layers for the same notes. Velocity-layer mapping should keep those layers together while preserving round robins.'
+        : hasTags &&
+              analysis.recommendedGroupHandling ==
+                  DecentSamplerGroupHandling.splitFolders
+        ? 'The tags look like separate sound choices such as mics, tone/tape variants, sources, or articulations. For this one-folder workflow, choose the tag you want or keep selected tags together.'
+        : hasControllerBindings
+        ? 'Decent uses UI controls for group volume or switching. Disting NT cannot reproduce those controls directly, so choose the closest static mapping below.'
         : velocityRanges.length > 1
-        ? 'This looks like a velocity-layered instrument. Velocity-layer import is likely useful.'
+        ? 'The XML contains explicit velocity ranges. Default mapping can preserve those ranges.'
         : rrValues.length > 1
-        ? 'This looks like a round-robin sample set. Round robins can be preserved.'
+        ? 'The XML contains round robins. Round-robin positions can be preserved.'
+        : hasTags
+        ? 'Tags are available as the main selection level for this preset.'
         : 'This looks like a simple sample set.';
 
     return _DecentImportFacts(
+      presetCount: analysis.presets.length,
       groupCount: groups.length,
       sampleCount: groups.fold<int>(
         0,
         (total, group) => total + group.sampleCount,
       ),
+      tagCount: analysis.tags.length,
       labelledGroupCount: groups
           .where((group) => !_isGenericDecentGroupName(group.name))
           .map((group) => group.name)
@@ -1152,157 +2965,6 @@ class _DecentImportFacts {
 
   static bool _isGenericDecentGroupName(String name) {
     return RegExp(r'^Group \d+$').hasMatch(name.trim());
-  }
-}
-
-String _decentGroupNumberLabel(DecentSamplerGroupInfo group) {
-  final separator = group.key.indexOf(':');
-  if (separator <= 0) return 'Group';
-  final index = int.tryParse(group.key.substring(0, separator));
-  return index == null ? 'Group' : 'Group ${index + 1}';
-}
-
-String? _decentXmlGroupName(DecentSamplerGroupInfo group) {
-  final name = group.name.trim();
-  if (name.isEmpty || RegExp(r'^Group \d+$').hasMatch(name)) return null;
-  return name;
-}
-
-class _SelectedGroupRow extends StatelessWidget {
-  const _SelectedGroupRow({
-    required this.group,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final DecentSamplerGroupInfo group;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final groupNumber = _decentGroupNumberLabel(group);
-    final xmlName = _decentXmlGroupName(group);
-    return ListTile(
-      dense: true,
-      contentPadding: EdgeInsets.zero,
-      leading: Icon(
-        selected ? Icons.check_circle : Icons.circle_outlined,
-        color: selected ? colorScheme.primary : colorScheme.outline,
-      ),
-      title: Text(xmlName == null ? groupNumber : '$groupNumber - $xmlName'),
-      subtitle: Text(
-        '${group.sampleCount} samples, ${group.noteRange}, ${group.roundRobinSummary}',
-      ),
-      onTap: onTap,
-    );
-  }
-}
-
-class _GroupReportRow extends StatelessWidget {
-  const _GroupReportRow({required this.group, required this.showDivider});
-
-  final DecentSamplerGroupInfo group;
-  final bool showDivider;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-    final examples = group.examples.take(2).join(', ');
-    final groupNumber = _decentGroupNumberLabel(group);
-    final xmlName = _decentXmlGroupName(group);
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              SizedBox(
-                width: 170,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      groupNumber,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    if (xmlName != null)
-                      Text(
-                        xmlName,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: colorScheme.primary,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      )
-                    else
-                      Text(
-                        'No XML name',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  '${group.sampleCount} samples, ${group.rootCount} roots, ${group.noteRange}. '
-                  '${group.velocitySummary}; ${group.roundRobinSummary}. '
-                  '${group.xmlSummary}. '
-                  '${examples.isEmpty ? '' : 'Examples: $examples'}',
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    color: colorScheme.onSurfaceVariant,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-        if (showDivider) Divider(height: 1, color: colorScheme.outlineVariant),
-      ],
-    );
-  }
-}
-
-class _ImportOptionTile extends StatelessWidget {
-  const _ImportOptionTile({
-    required this.value,
-    required this.groupValue,
-    required this.title,
-    required this.subtitle,
-    required this.onChanged,
-  });
-
-  final DecentSamplerGroupHandling value;
-  final DecentSamplerGroupHandling groupValue;
-  final String title;
-  final String subtitle;
-  final ValueChanged<DecentSamplerGroupHandling?> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final selected = value == groupValue;
-    return ListTile(
-      selected: selected,
-      contentPadding: EdgeInsets.zero,
-      leading: Icon(
-        selected ? Icons.check_circle : Icons.circle_outlined,
-        color: selected ? Theme.of(context).colorScheme.primary : null,
-      ),
-      title: Text(title),
-      subtitle: Text(subtitle),
-      onTap: () => onChanged(value),
-    );
   }
 }
 
@@ -1342,6 +3004,8 @@ class _InstrumentEditor extends StatefulWidget {
     required this.onChooseFolder,
     required this.onSelectRegion,
     required this.onCustomSaved,
+    required this.onStageDecentSamplerSource,
+    required this.onStageFolderSource,
   });
 
   final PolySampleInstrument instrument;
@@ -1350,6 +3014,8 @@ class _InstrumentEditor extends StatefulWidget {
   final Future<void> Function() onChooseFolder;
   final ValueChanged<PolySampleRegion> onSelectRegion;
   final Future<void> Function(String path) onCustomSaved;
+  final Future<_StagedImport?> Function(String path) onStageDecentSamplerSource;
+  final Future<_StagedImport?> Function(String path) onStageFolderSource;
 
   @override
   State<_InstrumentEditor> createState() => _InstrumentEditorState();
@@ -1387,7 +3053,7 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
   bool _applying = false;
   bool _savingLoop = false;
   bool _renderingWav = false;
-  bool _autoPreviewOnSelect = false;
+  bool _autoPreviewOnSelect = true;
   double _previewGainDb = 0;
   _WaveformMode _waveformMode = _WaveformMode.metadata;
   String? _lastWavExportFolder;
@@ -1619,7 +3285,8 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
         wavFiles.add(File(path));
       } else {
         if (!mounted) return;
-        regions.addAll(await _pickSelectedDecentWavs(context, path));
+        final staged = await widget.onStageDecentSamplerSource(path);
+        if (staged != null) regions.addAll(staged.regions);
       }
     }
     if (wavFiles.isNotEmpty) {
@@ -1628,7 +3295,13 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
         wavFiles,
         _commonParentPath(wavFiles),
       );
-      regions.addAll(await _pickSelectedWavGroups(context, groups));
+      regions.addAll(
+        await _pickSelectedWavGroups(
+          context,
+          groups,
+          defaults: _addWavDefaultsForCurrentMap(),
+        ),
+      );
     }
     unawaited(_saveCustomSourceFolder(paths.first));
     _addCustomRegions(regions);
@@ -1645,7 +3318,15 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
     if (path == null) return;
     if (!mounted) return;
     unawaited(_saveCustomSourceFolder(path));
-    final regions = await _pickSelectedDecentWavs(context, path);
+    final staged = await widget.onStageFolderSource(path);
+    if (!mounted) return;
+    final regions =
+        staged?.regions ??
+        await _pickSelectedDecentWavs(
+          context,
+          path,
+          defaults: _addWavDefaultsForCurrentMap(),
+        );
     if (regions.isEmpty && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('No WAV files found in that folder.')),
@@ -1681,6 +3362,30 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
     if (selected != null) {
       widget.onSelectRegion(selected);
     }
+  }
+
+  _AddWavMappingDefaults _addWavDefaultsForCurrentMap() {
+    final mappedRoots =
+        _regions.map((region) => region.rootMidi).nonNulls.toSet().toList()
+          ..sort();
+    if (mappedRoots.isEmpty) return const _AddWavMappingDefaults();
+
+    final velocities = _regions
+        .where((region) => region.rootMidi != null)
+        .map((region) => region.velocityLayer ?? 1)
+        .toList();
+    final low = mappedRoots.first.clamp(0, 127).toInt();
+    final nextVelocity = velocities.isEmpty
+        ? 1
+        : (velocities.reduce(math.max) + 1).clamp(1, 127).toInt();
+
+    return _AddWavMappingDefaults(
+      mappingMode: _AddWavMappingMode.map,
+      mapStartMidi: low,
+      mapNoteCount: mappedRoots.length,
+      mapRootMidis: mappedRoots,
+      mapVelocityLayer: nextVelocity,
+    );
   }
 
   void _removeSelectedRegions() {
@@ -2619,12 +4324,11 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
                   ),
                 ),
                 const SizedBox(width: 8),
-                FilterChip(
-                  avatar: const Icon(Icons.volume_up, size: 16),
-                  label: const Text('Auto preview'),
-                  selected: _autoPreviewOnSelect,
-                  onSelected: (value) =>
-                      setState(() => _autoPreviewOnSelect = value),
+                _AutoPreviewToggleButton(
+                  enabled: _autoPreviewOnSelect,
+                  onPressed: () => setState(
+                    () => _autoPreviewOnSelect = !_autoPreviewOnSelect,
+                  ),
                 ),
                 const SizedBox(width: 8),
                 _PreviewGainControl(
@@ -2668,6 +4372,7 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
                         lanes: _mapLanes,
                         minMidi: _mapMinMidi,
                         maxMidi: _mapMaxMidi,
+                        focusMidi: _firstMappedMidi(_regions),
                         mapRevision: _mapRevision,
                         onSelectRegion: _selectRegion,
                       ),
@@ -2779,18 +4484,34 @@ int _naturalCompare(String a, String b) {
   return aParts.length.compareTo(bParts.length);
 }
 
+String _choiceLeafLabel(String value) {
+  final parts = value.split('/');
+  return parts.isEmpty ? value.trim() : parts.last.trim();
+}
+
+String _normalizedChoiceLabel(String value) {
+  return value
+      .toLowerCase()
+      .replaceAll(RegExp(r'[^a-z0-9]+'), ' ')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
+}
+
 Future<List<PolySampleRegion>> _pickSelectedDecentWavs(
   BuildContext context,
-  String sourcePath,
-) async {
+  String sourcePath, {
+  _AddWavMappingDefaults defaults = const _AddWavMappingDefaults(),
+}) async {
   final groups = await _decentWavGroups(sourcePath);
-  return _pickSelectedWavGroups(context, groups);
+  if (!context.mounted) return const [];
+  return _pickSelectedWavGroups(context, groups, defaults: defaults);
 }
 
 Future<List<PolySampleRegion>> _pickSelectedWavGroups(
   BuildContext context,
-  List<_DecentWavGroup> groups,
-) async {
+  List<_DecentWavGroup> groups, {
+  _AddWavMappingDefaults defaults = const _AddWavMappingDefaults(),
+}) async {
   final candidates = groups.expand((group) => group.candidates).toList();
   if (!context.mounted || candidates.isEmpty) {
     if (context.mounted) {
@@ -2802,25 +4523,25 @@ Future<List<PolySampleRegion>> _pickSelectedWavGroups(
   }
   final result = await showDialog<_DecentWavSelectionResult>(
     context: context,
-    builder: (context) => _DecentWavSelectionDialog(groups: groups),
+    builder: (context) =>
+        _DecentWavSelectionDialog(groups: groups, defaults: defaults),
   );
   if (result == null || result.selected.isEmpty) return const [];
 
   final regions = <PolySampleRegion>[];
   final sorted = result.selected.toList()
     ..sort((a, b) => _naturalCompare(a.label, b.label));
-  for (var index = 0; index < sorted.length; index++) {
-    final candidate = sorted[index];
+  for (final candidate in sorted) {
     final file = await candidate.materialize();
+    final mapping = result.mappings[candidate];
     regions.add(
       candidate.toRegion(
         file,
         mappingMode: result.mappingMode,
-        spreadRootMidi: (result.spreadStartMidi + index).clamp(0, 127).toInt(),
-        stackRootMidi: result.stackRootMidi,
-        stackLowMidi: result.stackLowMidi,
-        stackVelocityLayer: result.stackVelocityLayer,
-        stackRoundRobin: index + 1,
+        mapRootMidi: mapping?.rootMidi,
+        mapLowMidi: mapping?.switchPoint,
+        mapVelocityLayer: mapping?.velocityLayer,
+        mapRoundRobin: mapping?.roundRobin,
       ),
     );
   }
@@ -3322,11 +5043,10 @@ abstract class _DecentWavCandidate {
   PolySampleRegion toRegion(
     File file, {
     _AddWavMappingMode mappingMode = _AddWavMappingMode.preserve,
-    int? spreadRootMidi,
-    int? stackRootMidi,
-    int? stackLowMidi,
-    int? stackVelocityLayer,
-    int? stackRoundRobin,
+    int? mapRootMidi,
+    int? mapLowMidi,
+    int? mapVelocityLayer,
+    int? mapRoundRobin,
   }) {
     switch (mappingMode) {
       case _AddWavMappingMode.preserve:
@@ -3335,23 +5055,11 @@ abstract class _DecentWavCandidate {
         return _detectedRegionFromFile(file, displayName: label);
       case _AddWavMappingMode.unmapped:
         return _customRegionFromFile(file, displayName: label);
-      case _AddWavMappingMode.spread:
-        final root = spreadRootMidi?.clamp(0, 127).toInt() ?? 36;
-        return _mappedRegionFromFile(
-          file,
-          displayName: label,
-          rootMidi: root,
-          switchPoint: root,
-          velocityLayer: 1,
-          roundRobin: 1,
-          loopStart: mapping.loopStart,
-          loopEnd: mapping.loopEnd,
-        );
-      case _AddWavMappingMode.roundRobin:
-        final root = (stackRootMidi ?? 36).clamp(0, 127).toInt();
-        final low = (stackLowMidi ?? root).clamp(0, 127).toInt();
-        final velocityLayer = (stackVelocityLayer ?? 1).clamp(1, 127).toInt();
-        final roundRobin = (stackRoundRobin ?? 1).clamp(1, 999).toInt();
+      case _AddWavMappingMode.map:
+        final root = (mapRootMidi ?? 36).clamp(0, 127).toInt();
+        final low = (mapLowMidi ?? root).clamp(0, 127).toInt();
+        final velocityLayer = (mapVelocityLayer ?? 1).clamp(1, 127).toInt();
+        final roundRobin = (mapRoundRobin ?? 1).clamp(1, 999).toInt();
         return _mappedRegionFromFile(
           file,
           displayName: label,
@@ -3477,24 +5185,38 @@ class _DecentWavSelectionResult {
   const _DecentWavSelectionResult({
     required this.selected,
     required this.mappingMode,
-    required this.spreadStartMidi,
-    required this.stackRootMidi,
-    required this.stackLowMidi,
-    required this.stackVelocityLayer,
+    required this.mappings,
   });
 
   final Set<_DecentWavCandidate> selected;
   final _AddWavMappingMode mappingMode;
-  final int spreadStartMidi;
-  final int stackRootMidi;
-  final int stackLowMidi;
-  final int stackVelocityLayer;
+  final Map<_DecentWavCandidate, PolySampleRegion> mappings;
+}
+
+class _AddWavMappingDefaults {
+  const _AddWavMappingDefaults({
+    this.mappingMode = _AddWavMappingMode.preserve,
+    this.mapStartMidi = 36,
+    this.mapNoteCount = 1,
+    this.mapRootMidis = const [],
+    this.mapVelocityLayer = 1,
+  });
+
+  final _AddWavMappingMode mappingMode;
+  final int mapStartMidi;
+  final int mapNoteCount;
+  final List<int> mapRootMidis;
+  final int mapVelocityLayer;
 }
 
 class _DecentWavSelectionDialog extends StatefulWidget {
-  const _DecentWavSelectionDialog({required this.groups});
+  const _DecentWavSelectionDialog({
+    required this.groups,
+    required this.defaults,
+  });
 
   final List<_DecentWavGroup> groups;
+  final _AddWavMappingDefaults defaults;
 
   @override
   State<_DecentWavSelectionDialog> createState() =>
@@ -3503,20 +5225,28 @@ class _DecentWavSelectionDialog extends StatefulWidget {
 
 class _DecentWavSelectionDialogState extends State<_DecentWavSelectionDialog> {
   final Set<_DecentWavCandidate> _selected = {};
+  final Map<_DecentWavCandidate, PolySampleRegion> _draftRegions = {};
   final AudioPlayer _previewPlayer = AudioPlayer();
   final Map<_DecentWavCandidate, File> _previewFiles = {};
   StreamSubscription<void>? _previewCompleteSubscription;
-  _AddWavMappingMode _mappingMode = _AddWavMappingMode.preserve;
-  int _spreadStartMidi = 36;
-  int _stackRootMidi = 36;
-  int _stackLowMidi = 36;
-  int _stackVelocityLayer = 1;
+  _LooseWavQuickMapping _quickMapping = _LooseWavQuickMapping.chromatic;
+  late int _mapStartMidi;
+  late int _mapVelocityLayer;
+  bool _addUnmapped = false;
   _DecentWavCandidate? _previewing;
   bool _previewBusy = false;
 
   @override
   void initState() {
     super.initState();
+    _mapStartMidi = widget.defaults.mapStartMidi.clamp(0, 127).toInt();
+    _mapVelocityLayer = widget.defaults.mapVelocityLayer.clamp(1, 127).toInt();
+    _quickMapping = switch (widget.defaults.mappingMode) {
+      _AddWavMappingMode.unmapped => _LooseWavQuickMapping.chromatic,
+      _AddWavMappingMode.preserve => _LooseWavQuickMapping.chromatic,
+      _AddWavMappingMode.map => _LooseWavQuickMapping.chromatic,
+    };
+    _seedDraftRegions();
     _previewCompleteSubscription = _previewPlayer.onPlayerComplete.listen((_) {
       if (!mounted) return;
       setState(() => _previewing = null);
@@ -3533,30 +5263,351 @@ class _DecentWavSelectionDialogState extends State<_DecentWavSelectionDialog> {
   int get _candidateCount =>
       widget.groups.fold(0, (total, group) => total + group.candidates.length);
 
-  String _mappingModeLabel(_AddWavMappingMode mode) {
-    switch (mode) {
-      case _AddWavMappingMode.preserve:
-        return 'Use source / filename mapping';
-      case _AddWavMappingMode.unmapped:
-        return 'Add unmapped';
-      case _AddWavMappingMode.spread:
-        return 'Spread across keys';
-      case _AddWavMappingMode.roundRobin:
-        return 'Stack as round robins';
+  List<_DecentWavCandidate> get _candidates =>
+      widget.groups.expand((group) => group.candidates).toList()
+        ..sort((a, b) => _naturalCompare(a.label, b.label));
+
+  void _seedDraftRegions() {
+    _applyQuickMapping(_candidates, replaceAll: true);
+  }
+
+  void _applyQuickMapping(
+    List<_DecentWavCandidate> candidates, {
+    bool replaceAll = false,
+  }) {
+    if (candidates.isEmpty) return;
+    final ordered = candidates.toList()
+      ..sort((a, b) => _naturalCompare(a.label, b.label));
+    setState(() {
+      for (var index = 0; index < ordered.length; index++) {
+        final candidate = ordered[index];
+        final root = switch (_quickMapping) {
+          _LooseWavQuickMapping.chromatic =>
+            (_mapStartMidi + index).clamp(0, 127).toInt(),
+          _LooseWavQuickMapping.roundRobins ||
+          _LooseWavQuickMapping.velocityLayers => _mapStartMidi,
+        };
+        final velocityLayer = switch (_quickMapping) {
+          _LooseWavQuickMapping.velocityLayers => index + 1,
+          _LooseWavQuickMapping.chromatic ||
+          _LooseWavQuickMapping.roundRobins => _mapVelocityLayer,
+        };
+        final roundRobin = switch (_quickMapping) {
+          _LooseWavQuickMapping.roundRobins => index + 1,
+          _LooseWavQuickMapping.chromatic ||
+          _LooseWavQuickMapping.velocityLayers => 1,
+        };
+        if (!replaceAll && !_draftRegions.containsKey(candidate)) continue;
+        _draftRegions[candidate] = PolySampleRegion(
+          path: 'draft:${identityHashCode(candidate)}',
+          fileName: candidate.label,
+          displayName: candidate.label,
+          rootMidi: root,
+          rootName: PolyMultisampleParser.midiToNoteName(root),
+          switchPoint: root,
+          velocityLayer: velocityLayer.clamp(1, 32).toInt(),
+          roundRobin: roundRobin.clamp(1, 32).toInt(),
+        );
+      }
+    });
+  }
+
+  void _applyQuickMappingToCurrentSelection() {
+    final selected = _selected.toList();
+    _applyQuickMapping(selected.isEmpty ? _candidates : selected);
+  }
+
+  void _setQuickMapping(_LooseWavQuickMapping mode) {
+    setState(() {
+      _quickMapping = mode;
+      _addUnmapped = false;
+    });
+    _applyQuickMappingToCurrentSelection();
+  }
+
+  void _setMapStartMidi(int value) {
+    setState(() => _mapStartMidi = value.clamp(0, 127).toInt());
+    _applyQuickMappingToCurrentSelection();
+  }
+
+  void _setMapVelocityLayer(int value) {
+    setState(() => _mapVelocityLayer = value.clamp(1, 32).toInt());
+    _applyQuickMappingToCurrentSelection();
+  }
+
+  List<PolySampleRegion> get _draftRegionList => _candidates
+      .map((candidate) => _draftRegions[candidate])
+      .nonNulls
+      .toList();
+
+  void _updateDraftRegion(
+    _DecentWavCandidate candidate,
+    PolySampleRegion updated,
+    _DraftRebalanceAxis axis,
+  ) {
+    setState(() {
+      final previous = _draftRegions[candidate];
+      _draftRegions[candidate] = updated;
+      switch (axis) {
+        case _DraftRebalanceAxis.roundRobin:
+          _rebalanceDraftRoundRobinsAfterMove(candidate, previous, updated);
+        case _DraftRebalanceAxis.velocity:
+          _rebalanceDraftVelocityLayersAfterMove(candidate, previous, updated);
+      }
+    });
+  }
+
+  void _rebalanceDraftRoundRobinsAfterMove(
+    _DecentWavCandidate movedCandidate,
+    PolySampleRegion? previousRegion,
+    PolySampleRegion movedRegion,
+  ) {
+    final previousLane = previousRegion == null
+        ? null
+        : _draftRoundRobinLaneKey(previousRegion);
+    final movedLane = _draftRoundRobinLaneKey(movedRegion);
+    if (movedLane == null) return;
+
+    final previousRoundRobin = (previousRegion?.roundRobin ?? 1)
+        .clamp(1, 999)
+        .toInt();
+    final movedRoundRobin = (movedRegion.roundRobin ?? 1).clamp(1, 999).toInt();
+    final hasCollision = _draftRoundRobinSlotOccupied(
+      movedCandidate: movedCandidate,
+      laneKey: movedLane,
+      roundRobin: movedRoundRobin,
+    );
+
+    if (previousLane == movedLane) {
+      if (!hasCollision || previousRoundRobin == movedRoundRobin) return;
+      if (movedRoundRobin < previousRoundRobin) {
+        _shiftDraftRoundRobinRange(
+          laneKey: movedLane,
+          movedCandidate: movedCandidate,
+          fromInclusive: movedRoundRobin,
+          toInclusive: previousRoundRobin - 1,
+          delta: 1,
+        );
+      } else {
+        _shiftDraftRoundRobinRange(
+          laneKey: movedLane,
+          movedCandidate: movedCandidate,
+          fromInclusive: previousRoundRobin + 1,
+          toInclusive: movedRoundRobin,
+          delta: -1,
+        );
+      }
+      return;
+    }
+
+    if (previousLane != null) {
+      _shiftDraftRoundRobinRange(
+        laneKey: previousLane,
+        movedCandidate: movedCandidate,
+        fromInclusive: previousRoundRobin + 1,
+        toInclusive: 999,
+        delta: -1,
+      );
+    }
+    if (!hasCollision) return;
+    _shiftDraftRoundRobinRange(
+      laneKey: movedLane,
+      movedCandidate: movedCandidate,
+      fromInclusive: movedRoundRobin,
+      toInclusive: 999,
+      delta: 1,
+    );
+  }
+
+  String? _draftRoundRobinLaneKey(PolySampleRegion region) {
+    final root = region.rootMidi;
+    final low = _effectiveLow(region);
+    if (root == null || low == null) return null;
+    return '$root|$low|${region.velocityLayer ?? 1}';
+  }
+
+  bool _draftRoundRobinSlotOccupied({
+    required _DecentWavCandidate movedCandidate,
+    required String laneKey,
+    required int roundRobin,
+  }) {
+    return _draftRegions.entries.any((entry) {
+      if (entry.key == movedCandidate) return false;
+      return _draftRoundRobinLaneKey(entry.value) == laneKey &&
+          (entry.value.roundRobin ?? 1) == roundRobin;
+    });
+  }
+
+  void _shiftDraftRoundRobinRange({
+    required String laneKey,
+    required _DecentWavCandidate movedCandidate,
+    required int fromInclusive,
+    required int toInclusive,
+    required int delta,
+  }) {
+    if (fromInclusive > toInclusive || delta == 0) return;
+    final entries =
+        _draftRegions.entries.where((entry) {
+          if (entry.key == movedCandidate) return false;
+          final roundRobin = entry.value.roundRobin ?? 1;
+          return _draftRoundRobinLaneKey(entry.value) == laneKey &&
+              roundRobin >= fromInclusive &&
+              roundRobin <= toInclusive;
+        }).toList()..sort((a, b) {
+          final rrCompare = (a.value.roundRobin ?? 1).compareTo(
+            b.value.roundRobin ?? 1,
+          );
+          if (rrCompare != 0) return rrCompare;
+          return _naturalCompare(a.key.label, b.key.label);
+        });
+    final ordered = delta > 0 ? entries.reversed : entries;
+    for (final entry in ordered) {
+      final region = entry.value;
+      final nextRoundRobin = ((region.roundRobin ?? 1) + delta)
+          .clamp(1, 999)
+          .toInt();
+      if (nextRoundRobin == (region.roundRobin ?? 1)) continue;
+      _draftRegions[entry.key] = region.copyWith(roundRobin: nextRoundRobin);
     }
   }
 
-  String _mappingModeHelp(_AddWavMappingMode mode) {
-    switch (mode) {
-      case _AddWavMappingMode.preserve:
-        return 'Use Decent XML first; loose WAVs can still use C3, _V2, or _RR3 filename tags.';
-      case _AddWavMappingMode.unmapped:
-        return 'Add files with no root note so you can map them by hand.';
-      case _AddWavMappingMode.spread:
-        return 'Place selected WAVs one-per-key from the chosen start note.';
-      case _AddWavMappingMode.roundRobin:
-        return 'Put selected WAVs on one root/low note as RR1, RR2, RR3...';
+  void _rebalanceDraftVelocityLayersAfterMove(
+    _DecentWavCandidate movedCandidate,
+    PolySampleRegion? previousRegion,
+    PolySampleRegion movedRegion,
+  ) {
+    final previousLane = previousRegion == null
+        ? null
+        : _draftVelocityLaneKey(previousRegion);
+    final movedLane = _draftVelocityLaneKey(movedRegion);
+    if (movedLane == null) return;
+
+    final previousVelocity = (previousRegion?.velocityLayer ?? 1)
+        .clamp(1, 127)
+        .toInt();
+    final movedVelocity = (movedRegion.velocityLayer ?? 1)
+        .clamp(1, 127)
+        .toInt();
+    final hasCollision = _draftVelocitySlotOccupied(
+      movedCandidate: movedCandidate,
+      laneKey: movedLane,
+      velocityLayer: movedVelocity,
+    );
+
+    if (previousLane == movedLane) {
+      if (!hasCollision || previousVelocity == movedVelocity) return;
+      if (movedVelocity < previousVelocity) {
+        _shiftDraftVelocityRange(
+          laneKey: movedLane,
+          movedCandidate: movedCandidate,
+          fromInclusive: movedVelocity,
+          toInclusive: previousVelocity - 1,
+          delta: 1,
+        );
+      } else {
+        _shiftDraftVelocityRange(
+          laneKey: movedLane,
+          movedCandidate: movedCandidate,
+          fromInclusive: previousVelocity + 1,
+          toInclusive: movedVelocity,
+          delta: -1,
+        );
+      }
+      return;
     }
+
+    if (previousLane != null) {
+      _shiftDraftVelocityRange(
+        laneKey: previousLane,
+        movedCandidate: movedCandidate,
+        fromInclusive: previousVelocity + 1,
+        toInclusive: 127,
+        delta: -1,
+      );
+    }
+    if (!hasCollision) return;
+    _shiftDraftVelocityRange(
+      laneKey: movedLane,
+      movedCandidate: movedCandidate,
+      fromInclusive: movedVelocity,
+      toInclusive: 127,
+      delta: 1,
+    );
+  }
+
+  String? _draftVelocityLaneKey(PolySampleRegion region) {
+    final root = region.rootMidi;
+    final low = _effectiveLow(region);
+    if (root == null || low == null) return null;
+    return '$root|$low|${region.roundRobin ?? 1}';
+  }
+
+  bool _draftVelocitySlotOccupied({
+    required _DecentWavCandidate movedCandidate,
+    required String laneKey,
+    required int velocityLayer,
+  }) {
+    return _draftRegions.entries.any((entry) {
+      if (entry.key == movedCandidate) return false;
+      return _draftVelocityLaneKey(entry.value) == laneKey &&
+          (entry.value.velocityLayer ?? 1) == velocityLayer;
+    });
+  }
+
+  void _shiftDraftVelocityRange({
+    required String laneKey,
+    required _DecentWavCandidate movedCandidate,
+    required int fromInclusive,
+    required int toInclusive,
+    required int delta,
+  }) {
+    if (fromInclusive > toInclusive || delta == 0) return;
+    final entries =
+        _draftRegions.entries.where((entry) {
+          if (entry.key == movedCandidate) return false;
+          final velocity = entry.value.velocityLayer ?? 1;
+          return _draftVelocityLaneKey(entry.value) == laneKey &&
+              velocity >= fromInclusive &&
+              velocity <= toInclusive;
+        }).toList()..sort((a, b) {
+          final velocityCompare = (a.value.velocityLayer ?? 1).compareTo(
+            b.value.velocityLayer ?? 1,
+          );
+          if (velocityCompare != 0) return velocityCompare;
+          return _naturalCompare(a.key.label, b.key.label);
+        });
+    final ordered = delta > 0 ? entries.reversed : entries;
+    for (final entry in ordered) {
+      final region = entry.value;
+      final nextVelocity = ((region.velocityLayer ?? 1) + delta)
+          .clamp(1, 127)
+          .toInt();
+      if (nextVelocity == (region.velocityLayer ?? 1)) continue;
+      _draftRegions[entry.key] = region.copyWith(velocityLayer: nextVelocity);
+    }
+  }
+
+  void _updateDraftRoot(_DecentWavCandidate candidate, int value) {
+    final region = _draftRegions[candidate];
+    if (region == null) return;
+    _updateDraftRegion(
+      candidate,
+      _updateRoot(region, value),
+      _DraftRebalanceAxis.roundRobin,
+    );
+  }
+
+  void _updateDraftLow(_DecentWavCandidate candidate, int value) {
+    final region = _draftRegions[candidate];
+    if (region == null) return;
+    final roots = _draftRegionList;
+    final min = _lowMinFor(region, roots);
+    final max = _lowMaxFor(region, roots);
+    _updateDraftRegion(
+      candidate,
+      region.copyWith(switchPoint: value.clamp(min, max).toInt()),
+      _DraftRebalanceAxis.roundRobin,
+    );
   }
 
   Future<void> _togglePreview(_DecentWavCandidate candidate) async {
@@ -3582,6 +5633,9 @@ class _DecentWavSelectionDialogState extends State<_DecentWavSelectionDialog> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final candidates =
+        widget.groups.expand((group) => group.candidates).toList()
+          ..sort((a, b) => _naturalCompare(a.label, b.label));
     return AlertDialog(
       title: const Text('Select WAVs to add'),
       content: SizedBox(
@@ -3591,88 +5645,31 @@ class _DecentWavSelectionDialogState extends State<_DecentWavSelectionDialog> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              '${widget.groups.length} group(s), $_candidateCount WAV file(s). Choose whole groups, or expand for individual WAVs.',
+              '$_candidateCount WAV file(s)',
               style: theme.textTheme.bodyMedium,
             ),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<_AddWavMappingMode>(
-              value: _mappingMode,
-              decoration: const InputDecoration(
-                labelText: 'Mapping',
-                border: OutlineInputBorder(),
-                isDense: true,
-              ),
-              items: [
-                for (final mode in _AddWavMappingMode.values)
-                  DropdownMenuItem(
-                    value: mode,
-                    child: Text(_mappingModeLabel(mode)),
-                  ),
-              ],
-              onChanged: (value) {
-                if (value == null) return;
-                setState(() => _mappingMode = value);
-              },
-            ),
-            if (_mappingMode == _AddWavMappingMode.spread) ...[
-              const SizedBox(height: 10),
-              SizedBox(
-                width: 180,
-                child: _SampleNoteStepper(
-                  label: 'Start',
-                  value: _spreadStartMidi,
-                  onChanged: (value) =>
-                      setState(() => _spreadStartMidi = value),
-                ),
-              ),
-            ],
-            if (_mappingMode == _AddWavMappingMode.roundRobin) ...[
-              const SizedBox(height: 10),
-              Wrap(
-                spacing: 12,
-                runSpacing: 8,
-                children: [
-                  SizedBox(
-                    width: 170,
-                    child: _SampleNoteStepper(
-                      label: 'Root',
-                      value: _stackRootMidi,
-                      onChanged: (value) {
-                        setState(() {
-                          final lowWasRoot = _stackLowMidi == _stackRootMidi;
-                          _stackRootMidi = value;
-                          if (lowWasRoot) _stackLowMidi = value;
-                        });
-                      },
-                    ),
-                  ),
-                  SizedBox(
-                    width: 170,
-                    child: _SampleNoteStepper(
-                      label: 'Low',
-                      value: _stackLowMidi,
-                      onChanged: (value) =>
-                          setState(() => _stackLowMidi = value),
-                    ),
-                  ),
-                  SizedBox(
-                    width: 170,
-                    child: _SampleNumberStepper(
-                      label: 'Velocity',
-                      value: _stackVelocityLayer,
-                      min: 1,
-                      max: 127,
-                      onChanged: (value) =>
-                          setState(() => _stackVelocityLayer = value),
-                    ),
-                  ),
-                ],
-              ),
-            ],
             const SizedBox(height: 6),
             Text(
-              _mappingModeHelp(_mappingMode),
+              'Choose a simple mapping, select WAVs, then adjust any row.',
               style: theme.textTheme.bodySmall,
+            ),
+            const SizedBox(height: 10),
+            _LooseWavQuickMappingPanel(
+              mode: _quickMapping,
+              rootMidi: _mapStartMidi,
+              velocityLayer: _mapVelocityLayer,
+              onModeChanged: _setQuickMapping,
+              onRootChanged: _setMapStartMidi,
+              onVelocityChanged: _setMapVelocityLayer,
+            ),
+            const SizedBox(height: 8),
+            CheckboxListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              value: _addUnmapped,
+              title: const Text('Add selected WAVs unmapped'),
+              onChanged: (value) =>
+                  setState(() => _addUnmapped = value ?? false),
             ),
             const SizedBox(height: 8),
             Row(
@@ -3695,83 +5692,47 @@ class _DecentWavSelectionDialogState extends State<_DecentWavSelectionDialog> {
             ),
             const Divider(height: 1),
             Expanded(
-              child: ListView.builder(
-                itemCount: widget.groups.length,
+              child: ListView.separated(
+                itemCount: candidates.length,
+                separatorBuilder: (_, _) => const Divider(height: 1),
                 itemBuilder: (context, index) {
-                  final group = widget.groups[index];
-                  final selectedCount = group.candidates
-                      .where(_selected.contains)
-                      .length;
-                  final checked = selectedCount == 0
-                      ? false
-                      : selectedCount == group.candidates.length
-                      ? true
-                      : null;
-                  return ExpansionTile(
-                    tilePadding: const EdgeInsets.symmetric(horizontal: 8),
-                    title: Row(
-                      children: [
-                        Checkbox(
-                          value: checked,
-                          tristate: true,
-                          onChanged: (value) => setState(() {
-                            if (value ?? false) {
-                              _selected.addAll(group.candidates);
-                            } else {
-                              _selected.removeAll(group.candidates);
-                            }
-                          }),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            group.label,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ],
-                    ),
-                    subtitle: Padding(
-                      padding: const EdgeInsets.only(left: 56),
-                      child: Text(
-                        group.detail,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    children: [
-                      for (final candidate in group.candidates)
-                        CheckboxListTile(
-                          dense: true,
-                          value: _selected.contains(candidate),
-                          secondary: IconButton(
-                            tooltip: _previewing == candidate
-                                ? 'Stop preview'
-                                : 'Preview WAV',
-                            onPressed: _previewBusy
-                                ? null
-                                : () => _togglePreview(candidate),
-                            icon: Icon(
-                              _previewing == candidate
-                                  ? Icons.stop
-                                  : Icons.play_arrow,
-                            ),
-                          ),
-                          title: Text(
-                            candidate.label,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          onChanged: (value) => setState(() {
-                            if (value ?? false) {
-                              _selected.add(candidate);
-                            } else {
-                              _selected.remove(candidate);
-                            }
-                          }),
-                        ),
-                    ],
+                  final candidate = candidates[index];
+                  return _WavCandidateSelectionRow(
+                    candidate: candidate,
+                    region: _draftRegions[candidate]!,
+                    regions: _draftRegionList,
+                    selected: _selected.contains(candidate),
+                    controlsEnabled: !_addUnmapped,
+                    previewing: _previewing == candidate,
+                    previewBusy: _previewBusy,
+                    onPreview: () => _togglePreview(candidate),
+                    onChangeRoot: (value) => _updateDraftRoot(candidate, value),
+                    onChangeLow: (value) => _updateDraftLow(candidate, value),
+                    onChangeVelocity: (value) {
+                      final region = _draftRegions[candidate];
+                      if (region == null) return;
+                      _updateDraftRegion(
+                        candidate,
+                        region.copyWith(velocityLayer: value),
+                        _DraftRebalanceAxis.velocity,
+                      );
+                    },
+                    onChangeRoundRobin: (value) {
+                      final region = _draftRegions[candidate];
+                      if (region == null) return;
+                      _updateDraftRegion(
+                        candidate,
+                        region.copyWith(roundRobin: value),
+                        _DraftRebalanceAxis.roundRobin,
+                      );
+                    },
+                    onChanged: (value) => setState(() {
+                      if (value) {
+                        _selected.add(candidate);
+                      } else {
+                        _selected.remove(candidate);
+                      }
+                    }),
                   );
                 },
               ),
@@ -3784,22 +5745,250 @@ class _DecentWavSelectionDialogState extends State<_DecentWavSelectionDialog> {
           onPressed: () => Navigator.of(context).pop(),
           child: const Text('Cancel'),
         ),
+        OutlinedButton(
+          onPressed: candidates.isEmpty
+              ? null
+              : () => Navigator.of(context).pop(
+                  _DecentWavSelectionResult(
+                    selected: Set<_DecentWavCandidate>.of(candidates),
+                    mappingMode: _AddWavMappingMode.unmapped,
+                    mappings: const {},
+                  ),
+                ),
+          child: const Text('Add all to editor unmapped'),
+        ),
         FilledButton(
           onPressed: _selected.isEmpty
               ? null
               : () => Navigator.of(context).pop(
                   _DecentWavSelectionResult(
                     selected: Set<_DecentWavCandidate>.of(_selected),
-                    mappingMode: _mappingMode,
-                    spreadStartMidi: _spreadStartMidi,
-                    stackRootMidi: _stackRootMidi,
-                    stackLowMidi: _stackLowMidi,
-                    stackVelocityLayer: _stackVelocityLayer,
+                    mappingMode: _addUnmapped
+                        ? _AddWavMappingMode.unmapped
+                        : _AddWavMappingMode.map,
+                    mappings: {
+                      for (final candidate in _selected)
+                        if (_draftRegions[candidate] != null)
+                          candidate: _draftRegions[candidate]!,
+                    },
                   ),
                 ),
           child: Text('Add ${_selected.length}'),
         ),
       ],
+    );
+  }
+}
+
+class _LooseWavQuickMappingPanel extends StatelessWidget {
+  const _LooseWavQuickMappingPanel({
+    required this.mode,
+    required this.rootMidi,
+    required this.velocityLayer,
+    required this.onModeChanged,
+    required this.onRootChanged,
+    required this.onVelocityChanged,
+  });
+
+  final _LooseWavQuickMapping mode;
+  final int rootMidi;
+  final int velocityLayer;
+  final ValueChanged<_LooseWavQuickMapping> onModeChanged;
+  final ValueChanged<int> onRootChanged;
+  final ValueChanged<int> onVelocityChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        border: Border.all(color: theme.colorScheme.outlineVariant),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(10),
+        child: Wrap(
+          spacing: 10,
+          runSpacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            Text('Mapping', style: theme.textTheme.titleSmall),
+            ChoiceChip(
+              selected: mode == _LooseWavQuickMapping.chromatic,
+              label: const Text('Chromatic'),
+              onSelected: (_) => onModeChanged(_LooseWavQuickMapping.chromatic),
+            ),
+            ChoiceChip(
+              selected: mode == _LooseWavQuickMapping.roundRobins,
+              label: const Text('Round robins'),
+              onSelected: (_) =>
+                  onModeChanged(_LooseWavQuickMapping.roundRobins),
+            ),
+            ChoiceChip(
+              selected: mode == _LooseWavQuickMapping.velocityLayers,
+              label: const Text('Velocity layers'),
+              onSelected: (_) =>
+                  onModeChanged(_LooseWavQuickMapping.velocityLayers),
+            ),
+            SizedBox(
+              width: 130,
+              child: _SampleNoteStepper(
+                label: mode == _LooseWavQuickMapping.chromatic
+                    ? 'Root start'
+                    : 'Root',
+                value: rootMidi,
+                onChanged: onRootChanged,
+              ),
+            ),
+            if (mode != _LooseWavQuickMapping.velocityLayers)
+              SizedBox(
+                width: 120,
+                child: _SampleNumberStepper(
+                  label: 'Vel',
+                  value: velocityLayer,
+                  min: 1,
+                  max: 32,
+                  onChanged: onVelocityChanged,
+                ),
+              ),
+            SizedBox(
+              width: 260,
+              child: Text(
+                switch (mode) {
+                  _LooseWavQuickMapping.chromatic =>
+                    'Selected WAVs are placed one per key from the root start.',
+                  _LooseWavQuickMapping.roundRobins =>
+                    'Selected WAVs share one root/velocity and become RR1, RR2...',
+                  _LooseWavQuickMapping.velocityLayers =>
+                    'Selected WAVs share one root and get Vel 1, Vel 2... Edit rows as needed.',
+                },
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _WavCandidateSelectionRow extends StatelessWidget {
+  const _WavCandidateSelectionRow({
+    required this.candidate,
+    required this.region,
+    required this.regions,
+    required this.selected,
+    required this.controlsEnabled,
+    required this.previewing,
+    required this.previewBusy,
+    required this.onPreview,
+    required this.onChangeRoot,
+    required this.onChangeLow,
+    required this.onChangeVelocity,
+    required this.onChangeRoundRobin,
+    required this.onChanged,
+  });
+
+  final _DecentWavCandidate candidate;
+  final PolySampleRegion region;
+  final List<PolySampleRegion> regions;
+  final bool selected;
+  final bool controlsEnabled;
+  final bool previewing;
+  final bool previewBusy;
+  final VoidCallback onPreview;
+  final ValueChanged<int> onChangeRoot;
+  final ValueChanged<int> onChangeLow;
+  final ValueChanged<int> onChangeVelocity;
+  final ValueChanged<int> onChangeRoundRobin;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final low = _effectiveLow(region) ?? region.rootMidi ?? 36;
+    return InkWell(
+      onTap: () => onChanged(!selected),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+        child: Row(
+          children: [
+            Checkbox(
+              value: selected,
+              onChanged: (value) => onChanged(value ?? false),
+            ),
+            IconButton(
+              tooltip: previewing ? 'Stop preview' : 'Preview WAV',
+              onPressed: previewBusy ? null : onPreview,
+              icon: Icon(previewing ? Icons.stop : Icons.play_arrow),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                candidate.label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodyMedium,
+              ),
+            ),
+            if (candidate.groupLabel.isNotEmpty) ...[
+              const SizedBox(width: 8),
+              Text(
+                candidate.groupLabel,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+            const SizedBox(width: 12),
+            SizedBox(
+              width: 120,
+              child: _SampleNoteStepper(
+                label: 'Root',
+                value: region.rootMidi,
+                onChanged: controlsEnabled ? onChangeRoot : null,
+              ),
+            ),
+            const SizedBox(width: 6),
+            SizedBox(
+              width: 120,
+              child: _SampleNoteStepper(
+                label: 'Low',
+                value: low,
+                min: _lowMinFor(region, regions),
+                max: _lowMaxFor(region, regions),
+                onChanged: controlsEnabled ? onChangeLow : null,
+              ),
+            ),
+            const SizedBox(width: 6),
+            SizedBox(
+              width: 120,
+              child: _SampleNumberStepper(
+                label: 'Vel',
+                value: region.velocityLayer ?? 1,
+                min: 1,
+                max: 127,
+                onChanged: controlsEnabled ? onChangeVelocity : (_) {},
+              ),
+            ),
+            const SizedBox(width: 6),
+            SizedBox(
+              width: 120,
+              child: _SampleNumberStepper(
+                label: 'RR',
+                value: region.roundRobin ?? 1,
+                min: 1,
+                max: 999,
+                onChanged: controlsEnabled ? onChangeRoundRobin : (_) {},
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -4229,6 +6418,7 @@ class _KeyMapSection extends StatefulWidget {
     required this.lanes,
     required this.minMidi,
     required this.maxMidi,
+    required this.focusMidi,
     required this.mapRevision,
     required this.onSelectRegion,
   });
@@ -4238,6 +6428,7 @@ class _KeyMapSection extends StatefulWidget {
   final List<_SampleLane> lanes;
   final int minMidi;
   final int maxMidi;
+  final int? focusMidi;
   final int mapRevision;
   final ValueChanged<PolySampleRegion> onSelectRegion;
 
@@ -4247,6 +6438,8 @@ class _KeyMapSection extends StatefulWidget {
 
 class _KeyMapSectionState extends State<_KeyMapSection> {
   final ScrollController _scrollController = ScrollController();
+  int? _lastAutoScrollRevision;
+  int? _lastAutoScrollFocus;
 
   @override
   void dispose() {
@@ -4275,6 +6468,37 @@ class _KeyMapSectionState extends State<_KeyMapSection> {
       _scrollController.position.maxScrollExtent,
     );
     _scrollController.jumpTo(next);
+  }
+
+  void _scheduleFocusScroll(Size canvasSize) {
+    final focus = widget.focusMidi;
+    if (focus == null ||
+        (_lastAutoScrollRevision == widget.mapRevision &&
+            _lastAutoScrollFocus == focus)) {
+      return;
+    }
+    _lastAutoScrollRevision = widget.mapRevision;
+    _lastAutoScrollFocus = focus;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.hasClients) return;
+      final layout = _MapLayout.fromRegions(
+        widget.instrument.regions,
+        widget.lanes,
+        canvasSize,
+        minMidi: widget.minMidi,
+        maxMidi: widget.maxMidi,
+      );
+      final clampedFocus = focus.clamp(layout.minMidi, layout.maxMidi - 1);
+      final focusX =
+          layout.left +
+          ((clampedFocus - layout.minMidi) / layout.midiSpan) * layout.width;
+      final target = (focusX - layout.left).clamp(
+        _scrollController.position.minScrollExtent,
+        _scrollController.position.maxScrollExtent,
+      );
+      _scrollController.jumpTo(target);
+    });
   }
 
   @override
@@ -4325,6 +6549,8 @@ class _KeyMapSectionState extends State<_KeyMapSection> {
                     constraints.maxWidth,
                     keyCount * 24.0 + 80,
                   );
+                  final canvasSize = Size(canvasWidth, constraints.maxHeight);
+                  _scheduleFocusScroll(canvasSize);
                   return Listener(
                     onPointerSignal: _scrollHorizontally,
                     child: SingleChildScrollView(
@@ -4332,7 +6558,7 @@ class _KeyMapSectionState extends State<_KeyMapSection> {
                       scrollDirection: Axis.horizontal,
                       child: SizedBox(
                         width: canvasWidth,
-                        height: constraints.maxHeight,
+                        height: canvasSize.height,
                         child: RepaintBoundary(
                           child: CustomPaint(
                             painter: _KeyboardMapPainter(
@@ -4350,7 +6576,7 @@ class _KeyMapSectionState extends State<_KeyMapSection> {
                               onTapUp: (details) {
                                 final region = _regionAtPosition(
                                   details.localPosition,
-                                  Size(canvasWidth, constraints.maxHeight),
+                                  canvasSize,
                                 );
                                 if (region != null) {
                                   widget.onSelectRegion(region);
@@ -4783,12 +7009,17 @@ int _initialMapMinMidi(List<PolySampleRegion> regions) {
 }
 
 int _initialMapMaxMidi(List<PolySampleRegion> regions, int minMidi) {
-  final extents = _midiExtentsForRegions(regions);
-  if (extents.isEmpty) return 128;
-  extents.sort();
-  return (((extents.last / 12).ceil() * 12) + 12)
-      .clamp(minMidi + 12, 128)
-      .toInt();
+  return 128;
+}
+
+int? _firstMappedMidi(List<PolySampleRegion> regions) {
+  final starts = regions
+      .map((region) => _effectiveLow(region) ?? region.rootMidi)
+      .whereType<int>()
+      .toList();
+  if (starts.isEmpty) return null;
+  starts.sort();
+  return starts.first.clamp(0, 127).toInt();
 }
 
 PolySampleRegion _updateRoot(PolySampleRegion region, int midi) {
@@ -5284,6 +7515,39 @@ class _IssueLabel extends StatelessWidget {
       PolySampleIssue.missingRootNote => 'No root',
       PolySampleIssue.unsupportedFileType => 'Unsupported',
     };
+  }
+}
+
+class _AutoPreviewToggleButton extends StatelessWidget {
+  const _AutoPreviewToggleButton({
+    required this.enabled,
+    required this.onPressed,
+  });
+
+  final bool enabled;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final icon = enabled ? Icons.volume_up : Icons.volume_off;
+    final label = enabled ? 'Auto preview on' : 'Auto preview off';
+    final tooltip = enabled
+        ? 'Auto preview is on. Selecting a sample plays it.'
+        : 'Auto preview is off. Selecting a sample will not play it.';
+    return Tooltip(
+      message: tooltip,
+      child: enabled
+          ? FilledButton.tonalIcon(
+              onPressed: onPressed,
+              icon: Icon(icon, size: 18),
+              label: Text(label),
+            )
+          : OutlinedButton.icon(
+              onPressed: onPressed,
+              icon: Icon(icon, size: 18),
+              label: Text(label),
+            ),
+    );
   }
 }
 

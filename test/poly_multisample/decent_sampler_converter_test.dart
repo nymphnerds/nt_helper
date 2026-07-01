@@ -223,6 +223,42 @@ void main() {
       expect(outputFiles, contains('Kalimba_Swarm_D4_V2.wav'));
     });
 
+    test('analyze exposes tag XML mapping summaries', () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'decent_converter_tag_summary_test_',
+      );
+      addTearDown(() async {
+        if (await tempDir.exists()) await tempDir.delete(recursive: true);
+      });
+
+      final preset = File('${tempDir.path}/Dynamics.dspreset');
+      await preset.writeAsString('''
+<DecentSampler>
+  <groups>
+    <group name="Dynamics">
+      <sample path="Samples/c4_p_rr1.wav" rootNote="C4" loNote="C4" hiNote="D4" loVel="1" hiVel="63" seqPosition="1" tags="p"/>
+      <sample path="Samples/c4_p_rr2.wav" rootNote="C4" loNote="C4" hiNote="D4" loVel="1" hiVel="63" seqPosition="2" tags="p"/>
+      <sample path="Samples/c4_mf.wav" rootNote="C4" loNote="C4" hiNote="D4" loVel="64" hiVel="127" tags="mf"/>
+    </group>
+  </groups>
+</DecentSampler>
+''');
+
+      final analysis = await DecentSamplerConverter().analyze(
+        sourcePath: preset.path,
+      );
+
+      final pTag = analysis.tags.singleWhere((tag) => tag.label == 'p');
+      expect(pTag.noteRange, 'C4 - D4');
+      expect(pTag.velocitySummary, '1-63');
+      expect(pTag.roundRobinSummary, 'RR 1-2');
+
+      final mfTag = analysis.tags.singleWhere((tag) => tag.label == 'mf');
+      expect(mfTag.noteRange, 'C4 - D4');
+      expect(mfTag.velocitySummary, '64-127');
+      expect(mfTag.roundRobinSummary, 'No seqPosition');
+    });
+
     test('imports already extracted Decent Sampler folders', () async {
       final tempDir = await Directory.systemTemp.createTemp(
         'decent_converter_folder_test_',
@@ -554,7 +590,7 @@ void main() {
         );
         expect(
           analysis.recommendedGroupHandling,
-          DecentSamplerGroupHandling.splitFolders,
+          DecentSamplerGroupHandling.velocityLayers,
         );
 
         final result = await converter.convert(
@@ -710,6 +746,182 @@ void main() {
         isTrue,
       );
       expect(result.warnings, isEmpty);
+    });
+
+    test('forced tag round robins do not add velocity layers', () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'decent_converter_tag_rr_only_test_',
+      );
+      addTearDown(() async {
+        if (await tempDir.exists()) await tempDir.delete(recursive: true);
+      });
+
+      await _writeDummyWavs(tempDir, [
+        'Samples/take_a_c4.wav',
+        'Samples/take_b_c4.wav',
+      ]);
+      final preset = File('${tempDir.path}/Tag RR Only.dspreset');
+      await preset.writeAsString('''
+<DecentSampler>
+  <groups>
+    <group name="Take A" tags="Take A">
+      <sample path="Samples/take_a_c4.wav" rootNote="C4"/>
+    </group>
+    <group name="Take B" tags="Take B">
+      <sample path="Samples/take_b_c4.wav" rootNote="C4"/>
+    </group>
+  </groups>
+</DecentSampler>
+''');
+
+      final converter = DecentSamplerConverter();
+      final analysis = await converter.analyze(sourcePath: preset.path);
+      final tagKeys = {for (final tag in analysis.tags) tag.label: tag.key};
+
+      final result = await converter.convert(
+        sourcePath: preset.path,
+        outputParentPath: '${tempDir.path}/out',
+        options: DecentSamplerConvertOptions(
+          groupHandling: DecentSamplerGroupHandling.tagMapping,
+          selectedTagKeys: [tagKeys['Take A']!, tagKeys['Take B']!],
+          tagRoundRobins: {tagKeys['Take A']!: 1, tagKeys['Take B']!: 2},
+          preserveXmlMapping: true,
+        ),
+      );
+
+      final outputFiles =
+          await Directory(result.outputFolders.single)
+                .list()
+                .where(
+                  (entity) => entity is File && entity.path.endsWith('.wav'),
+                )
+                .map((entity) => entity.uri.pathSegments.last)
+                .toList()
+            ..sort();
+
+      expect(outputFiles, ['Tag_RR_Only_C4_RR1.wav', 'Tag_RR_Only_C4_RR2.wav']);
+      expect(outputFiles.any((name) => name.contains('_V')), isFalse);
+      expect(result.warnings, isEmpty);
+    });
+
+    test('classifies raw buzz gloss as source layer tags', () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'decent_converter_source_layer_tag_test_',
+      );
+      addTearDown(() async {
+        if (await tempDir.exists()) await tempDir.delete(recursive: true);
+      });
+
+      await _writeDummyWavs(tempDir, [
+        'Samples/raw_c4.wav',
+        'Samples/buzz_c4.wav',
+        'Samples/gloss_c4.wav',
+      ]);
+      final preset = File('${tempDir.path}/Kalimba Swarm.dspreset');
+      await preset.writeAsString('''
+<DecentSampler>
+  <groups>
+    <group name="raw" tags="raw">
+      <sample path="Samples/raw_c4.wav" rootNote="C4"/>
+    </group>
+    <group name="buzz" tags="buzz">
+      <sample path="Samples/buzz_c4.wav" rootNote="C4"/>
+    </group>
+    <group name="gloss" tags="gloss">
+      <sample path="Samples/gloss_c4.wav" rootNote="C4"/>
+    </group>
+  </groups>
+</DecentSampler>
+''');
+
+      final analysis = await DecentSamplerConverter().analyze(
+        sourcePath: preset.path,
+      );
+      final roles = {for (final tag in analysis.tags) tag.label: tag.role};
+      final previews = {
+        for (final tag in analysis.tags) tag.label: tag.previewSourcePath,
+      };
+
+      expect(roles['raw'], DecentSamplerTagRole.layer);
+      expect(roles['buzz'], DecentSamplerTagRole.layer);
+      expect(roles['gloss'], DecentSamplerTagRole.layer);
+      expect(previews['raw'], 'Samples/raw_c4.wav');
+      expect(analysis.groups.first.previewSourcePath, 'Samples/raw_c4.wav');
+    });
+
+    test('classifies mic as a source layer tag', () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'decent_converter_mic_tag_test_',
+      );
+      addTearDown(() async {
+        if (await tempDir.exists()) await tempDir.delete(recursive: true);
+      });
+
+      await _writeDummyWavs(tempDir, [
+        'Samples/mic1_c4.wav',
+        'Samples/mic2_c4.wav',
+      ]);
+      final preset = File('${tempDir.path}/Mic Choices.dspreset');
+      await preset.writeAsString('''
+<DecentSampler>
+  <groups>
+    <group name="Mic 1" mic="mic">
+      <sample path="Samples/mic1_c4.wav" rootNote="C4"/>
+    </group>
+    <group name="Mic 2" tags="room">
+      <sample path="Samples/mic2_c4.wav" rootNote="C4"/>
+    </group>
+  </groups>
+</DecentSampler>
+''');
+
+      final analysis = await DecentSamplerConverter().analyze(
+        sourcePath: preset.path,
+      );
+      final mic = analysis.tags.firstWhere((tag) => tag.key == 'layer:mic');
+
+      expect(mic.role, DecentSamplerTagRole.layer);
+      expect(mic.previewSourcePath, 'Samples/mic1_c4.wav');
+    });
+
+    test('classifies noise and named RR fallback groups', () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'decent_converter_noise_rr_fallback_test_',
+      );
+      addTearDown(() async {
+        if (await tempDir.exists()) await tempDir.delete(recursive: true);
+      });
+
+      await _writeDummyWavs(tempDir, [
+        'Samples/noise_91.wav',
+        'Samples/dead_32_rr1.wav',
+        'Samples/dead_32_rr2.wav',
+      ]);
+      final preset = File('${tempDir.path}/LoFi Nylon Shape.dspreset');
+      await preset.writeAsString('''
+<DecentSampler>
+  <groups>
+    <group name="Noises">
+      <sample path="Samples/noise_91.wav" rootNote="91" loNote="91" hiNote="91"/>
+    </group>
+    <group name="DeadNotesRR1" seqMode="round_robin" seqLength="2" seqPosition="1">
+      <sample path="Samples/dead_32_rr1.wav" rootNote="32" loNote="32" hiNote="32"/>
+    </group>
+    <group name="DeadNotesRR2" seqMode="round_robin" seqLength="2" seqPosition="2">
+      <sample path="Samples/dead_32_rr2.wav" rootNote="32" loNote="32" hiNote="32"/>
+    </group>
+  </groups>
+</DecentSampler>
+''');
+
+      final analysis = await DecentSamplerConverter().analyze(
+        sourcePath: preset.path,
+      );
+      final roles = {for (final tag in analysis.tags) tag.label: tag.role};
+
+      expect(roles['Noises'], DecentSamplerTagRole.layer);
+      expect(roles['DeadNotesRR1'], DecentSamplerTagRole.roundRobin);
+      expect(roles['DeadNotesRR2'], DecentSamplerTagRole.roundRobin);
     });
   });
 }
