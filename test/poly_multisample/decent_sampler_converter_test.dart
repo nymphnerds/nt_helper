@@ -481,6 +481,57 @@ void main() {
       );
     });
 
+    test('classifies dry and texture labels as layer variants', () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'decent_converter_dry_layer_role_test_',
+      );
+      addTearDown(() async {
+        if (await tempDir.exists()) await tempDir.delete(recursive: true);
+      });
+
+      await _writeDummyWavs(tempDir, [
+        'Samples/dry.wav',
+        'Samples/glitch.wav',
+        'Samples/jitter.wav',
+        'Samples/air.wav',
+        'Samples/wave.wav',
+      ]);
+
+      final preset = File('${tempDir.path}/D Mod.dspreset');
+      await preset.writeAsString('''
+<DecentSampler>
+  <groups>
+    <group name="Dry" tags="Dry">
+      <sample path="Samples/dry.wav" rootNote="C4"/>
+    </group>
+    <group name="Glitch" tags="Glitch">
+      <sample path="Samples/glitch.wav" rootNote="C4"/>
+    </group>
+    <group name="Jitter" tags="Jitter">
+      <sample path="Samples/jitter.wav" rootNote="C4"/>
+    </group>
+    <group name="Air" tags="Air">
+      <sample path="Samples/air.wav" rootNote="C4"/>
+    </group>
+    <group name="Wave" tags="Wave">
+      <sample path="Samples/wave.wav" rootNote="C4"/>
+    </group>
+  </groups>
+</DecentSampler>
+''');
+
+      final analysis = await DecentSamplerConverter().analyze(
+        sourcePath: preset.path,
+      );
+      final roles = {for (final tag in analysis.tags) tag.label: tag.role};
+
+      expect(roles['Dry'], DecentSamplerTagRole.layer);
+      expect(roles['Glitch'], DecentSamplerTagRole.layer);
+      expect(roles['Jitter'], DecentSamplerTagRole.layer);
+      expect(roles['Air'], DecentSamplerTagRole.layer);
+      expect(roles['Wave'], DecentSamplerTagRole.layer);
+    });
+
     test('summarizes repaired duplicate round robins as decisions', () async {
       final tempDir = await Directory.systemTemp.createTemp(
         'decent_converter_duplicate_rr_test_',

@@ -162,7 +162,7 @@ Tag rows show a short plain-language reason line. Avoid raw XML wording in the m
 
 Current v6 behaviour is slightly more practical than the earlier reason-line design: rows show concise action/consequence notes based on the selected mapping mode. For Keep Decent map, examples include `XML velocity kept`, `XML RR kept`, `source/mic layer is fixed`, and `Decent switching may not translate`. Tooltips carry the fuller XML evidence.
 
-The full-library tag scan showed that baseline source/tone tags should be preferred when a library exposes variants. Examples: `raw` over `buzz/gloss`, `natural` over `hyped`, `close` over `room`, `front` over `back/feet`, `DrySig` over `CVSig/OSSig`, and `Tron` over `Tape`. Pure numeric tags and `Channel 1` style labels are usually Decent UI/index labels and should not be promoted as musical tag choices.
+The full-library tag scan showed that baseline source/tone tags should be preferred when a library exposes variants. Examples: `raw` over `buzz/gloss`, `dry` over `glitch/jitter/air/wave`, `natural` over `hyped`, `close` over `room`, `front` over `back/feet`, `DrySig` over `CVSig/OSSig`, and `Tron` over `Tape`. Pure numeric tags and `Channel 1` style labels are usually Decent UI/index labels and should not be promoted as musical tag choices.
 
 ## XML Fidelity Rules
 

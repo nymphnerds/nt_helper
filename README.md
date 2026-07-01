@@ -3,8 +3,8 @@
 ## Poly Multisample Builder Test Release Changelog
 
 Branch: `nymph-next-fix`
-Tag: `poly-multisample-builder-test-v6`
-Windows zip: `nt_helper-windows-poly-multisample-builder-test-v6.zip`
+Tag: `poly-multisample-builder-test-v7`
+Windows zip: `nt_helper-windows-poly-multisample-builder-test-v7.zip`
 
 This fork/branch contains an experimental Windows test build for a new Poly Multisample Builder in NT Helper.
 
@@ -21,6 +21,12 @@ This fork/branch contains an experimental Windows test build for a new Poly Mult
 - Keeps `Keep Decent map` honest: compatible XML Low/Root/Vel/RR/loop data is preserved, while row notes warn when Decent source/mic layers or switching/control behaviour cannot be reproduced directly on Disting.
 - Improves auto-preview and keyboard-map focus after import without clamping the available MIDI range.
 - Adds regression coverage for tag XML summaries, mic/source-layer classification, preview-source paths, forced tag RR behaviour, and Decent RR/velocity interactions.
+
+### 2026-07-01 Dry/Baseline Tag Fix
+
+- Treats `Dry` as a preferred baseline/source tag instead of excluding it as an optional mic/source layer.
+- Classifies texture/source variants such as `Glitch`, `Jitter`, `Air`, and `Wave` as layer choices, so the default Decent tag selection can prefer the clean baseline where available.
+- Adds regression coverage for Dry plus texture-variant tag roles.
 
 ### 2026-06-29 Custom Import Mapping Polish
 

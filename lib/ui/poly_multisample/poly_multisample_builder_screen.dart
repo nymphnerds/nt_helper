@@ -1700,7 +1700,7 @@ class _DecentImportOptionsDialogState
       return tag.role == DecentSamplerTagRole.layer &&
           (totalSamples == 0 || tag.sampleCount < totalSamples);
     }).toList();
-    if (layerTags.length < 2) return {};
+    if (layerTags.isEmpty) return {};
 
     final preferred = layerTags
         .where((tag) => _isPreferredBaseLayerLabel(tag.label))
