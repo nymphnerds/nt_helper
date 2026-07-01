@@ -3,6 +3,10 @@
 #include <dwmapi.h>
 #include <flutter_windows.h>
 
+#include <cstdint>
+#include <sstream>
+#include <string>
+
 #include "resource.h"
 #include "utils.h"
 
@@ -31,6 +35,57 @@ constexpr const wchar_t kGetPreferredBrightnessRegValue[] = L"AppsUseLightTheme"
 static int g_active_window_count = 0;
 
 using EnableNonClientDpiScaling = BOOL __stdcall(HWND hwnd);
+
+std::wstring HwndString(HWND hwnd) {
+  if (hwnd == nullptr) {
+    return L"null";
+  }
+  std::wstringstream stream;
+  stream << L"0x" << std::hex << std::uppercase
+         << reinterpret_cast<std::uintptr_t>(hwnd);
+  return stream.str();
+}
+
+std::wstring BoolString(bool value) {
+  return value ? L"true" : L"false";
+}
+
+std::wstring ActivationStateString(WPARAM wparam) {
+  switch (LOWORD(wparam)) {
+    case WA_ACTIVE:
+      return L"WA_ACTIVE";
+    case WA_CLICKACTIVE:
+      return L"WA_CLICKACTIVE";
+    case WA_INACTIVE:
+      return L"WA_INACTIVE";
+    default:
+      return L"unknown(" + std::to_wstring(LOWORD(wparam)) + L")";
+  }
+}
+
+void VideoPopupDebugLog(const std::wstring& message) {
+#ifdef NDEBUG
+  (void)message;
+#else
+  const std::wstring line = L"[VIDEO_POPUP_NATIVE] " + message;
+  StartupLog(line);
+
+  const std::wstring terminated_line = line + L"\r\n";
+  const std::string utf8_line = Utf8FromUtf16(terminated_line.c_str());
+  if (utf8_line.empty()) {
+    return;
+  }
+
+  HANDLE output = GetStdHandle(STD_OUTPUT_HANDLE);
+  if (output == nullptr || output == INVALID_HANDLE_VALUE) {
+    return;
+  }
+
+  DWORD written = 0;
+  WriteFile(output, utf8_line.data(), static_cast<DWORD>(utf8_line.size()),
+            &written, nullptr);
+#endif
+}
 
 // Scale helper to convert logical scaler values to physical using passed in
 // scale factor
@@ -218,11 +273,25 @@ Win32Window::MessageHandler(HWND hwnd,
       return 0;
     }
 
-    case WM_ACTIVATE:
-      if (child_content_ != nullptr) {
+    case WM_ACTIVATE: {
+      const bool activating = LOWORD(wparam) != WA_INACTIVE;
+      VideoPopupDebugLog(L"Win32Window WM_ACTIVATE hwnd=" + HwndString(hwnd) +
+                         L" state=" + ActivationStateString(wparam) +
+                         L" child=" + HwndString(child_content_) +
+                         L" focusBefore=" + HwndString(GetFocus()) +
+                         L" foreground=" + HwndString(GetForegroundWindow()) +
+                         L" focusChildOnActivate=" +
+                         BoolString(focus_child_on_activate_) +
+                         L" setChildFocus=" +
+                         BoolString(focus_child_on_activate_ && activating &&
+                                    child_content_ != nullptr));
+      // Focusing a child while deactivating can steal focus back from another
+      // top-level Flutter window that is trying to activate.
+      if (focus_child_on_activate_ && activating && child_content_ != nullptr) {
         SetFocus(child_content_);
       }
       return 0;
+    }
 
     case WM_DWMCOLORIZATIONCOLORCHANGED:
       UpdateTheme(hwnd);
@@ -257,7 +326,14 @@ void Win32Window::SetChildContent(HWND content) {
   MoveWindow(content, frame.left, frame.top, frame.right - frame.left,
              frame.bottom - frame.top, true);
 
-  SetFocus(child_content_);
+  const bool visible = IsWindowVisible(window_handle_);
+  VideoPopupDebugLog(L"Win32Window SetChildContent hwnd=" +
+                     HwndString(window_handle_) +
+                     L" child=" + HwndString(child_content_) +
+                     L" visible=" + BoolString(visible));
+  if (visible) {
+    SetFocus(child_content_);
+  }
 }
 
 RECT Win32Window::GetClientArea() {
@@ -272,6 +348,10 @@ HWND Win32Window::GetHandle() {
 
 void Win32Window::SetQuitOnClose(bool quit_on_close) {
   quit_on_close_ = quit_on_close;
+}
+
+void Win32Window::SetFocusChildOnActivate(bool focus_child_on_activate) {
+  focus_child_on_activate_ = focus_child_on_activate;
 }
 
 bool Win32Window::OnCreate() {

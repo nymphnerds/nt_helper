@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:ui';
 
+import 'package:desktop_multi_window/desktop_multi_window.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -14,7 +16,9 @@ import 'package:nt_helper/services/mcp_server_service.dart';
 import 'package:nt_helper/services/node_positions_persistence_service.dart';
 import 'package:nt_helper/services/settings_service.dart' show SettingsService;
 import 'package:nt_helper/services/startup_log_service.dart';
+import 'package:nt_helper/services/video_popup_window_service.dart';
 import 'package:nt_helper/services/zoom_hotkey_service.dart';
+import 'package:nt_helper/ui/video_popup_app.dart';
 import 'package:nt_helper/util/in_app_logger.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -28,6 +32,12 @@ const MethodChannel _windowEventsChannel = MethodChannel(
 const MethodChannel _zoomHotkeysChannel = MethodChannel(
   'com.nt_helper.app/zoom_hotkeys',
 );
+
+void _videoPopupDebugLog(String message) {
+  if (kDebugMode) {
+    debugPrint('[VIDEO_POPUP_DART] $message');
+  }
+}
 
 /// Manages window bounds persistence - saves on every move/resize
 class _WindowBoundsManager with WindowListener {
@@ -80,13 +90,13 @@ final _windowBoundsManager = _WindowBoundsManager();
 
 bool _hasRunAppSuccessfully = false;
 
-void main() {
+void main(List<String> args) {
   StartupLogService.initialize();
   StartupLogService.log('main() entered');
 
   runZonedGuarded(
     () async {
-      await _bootstrapApp();
+      await _bootstrapApp(args);
     },
     (error, stackTrace) {
       final isStartupError = !_hasRunAppSuccessfully;
@@ -104,13 +114,49 @@ void main() {
   );
 }
 
-Future<void> _bootstrapApp() async {
+Future<void> _bootstrapApp(List<String> args) async {
   _installGlobalErrorHandlers();
 
   StartupLogService.traceSync(
     'WidgetsFlutterBinding.ensureInitialized',
     WidgetsFlutterBinding.ensureInitialized,
   );
+
+  if (Platform.isWindows) {
+    _videoPopupDebugLog('main() Windows args=$args');
+  }
+
+  if (Platform.isWindows &&
+      VideoPopupWindowService.isWindowsNativeVideoPopupArguments(args)) {
+    _videoPopupDebugLog('main(): detected Windows native video popup args');
+    await _bootstrapVideoPopupWindow();
+    return;
+  }
+
+  if (_isDesktop) {
+    try {
+      final windowController = await StartupLogService.traceAsync(
+        'WindowController.fromCurrentEngine',
+        WindowController.fromCurrentEngine,
+      );
+      if (VideoPopupWindowService.isVideoPopupArguments(
+        windowController.arguments,
+      )) {
+        _videoPopupDebugLog(
+          'main(): detected desktop_multi_window '
+          'video popup arguments=${windowController.arguments}',
+        );
+        await _bootstrapVideoPopupWindow();
+        return;
+      }
+    } catch (error, stackTrace) {
+      StartupLogService.logError(
+        'Unable to inspect multi-window arguments; continuing main startup',
+        error,
+        stackTrace,
+      );
+    }
+  }
 
   // Initialize window_manager on desktop platforms
   Rect? savedBounds;
@@ -286,6 +332,32 @@ Future<void> _bootstrapApp() async {
   StartupLogService.log('Startup bootstrap completed');
 }
 
+Future<void> _bootstrapVideoPopupWindow() async {
+  _videoPopupDebugLog(
+    '_bootstrapVideoPopupWindow() platform=${Platform.operatingSystem}',
+  );
+  if (!Platform.isWindows) {
+    await StartupLogService.traceAsync(
+      'windowManager.ensureInitialized',
+      windowManager.ensureInitialized,
+    );
+  }
+  await StartupLogService.traceAsync(
+    'SettingsService.init',
+    SettingsService().init,
+  );
+  runApp(const VideoPopupApp());
+  _hasRunAppSuccessfully = true;
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    unawaited(
+      StartupLogService.traceAsync(
+        'configureVideoPopupWindow',
+        configureVideoPopupWindow,
+      ),
+    );
+  });
+}
+
 bool get _isDesktop =>
     Platform.isLinux || Platform.isMacOS || Platform.isWindows;
 
@@ -315,9 +387,15 @@ void _installGlobalErrorHandlers() {
 
 Future<void> _showDesktopWindow(String reason) async {
   try {
+    if (Platform.isWindows) {
+      _videoPopupDebugLog('_showDesktopWindow start reason=$reason');
+    }
     await windowManager.ensureInitialized();
     await windowManager.show();
     await windowManager.focus();
+    if (Platform.isWindows) {
+      _videoPopupDebugLog('_showDesktopWindow done reason=$reason');
+    }
     StartupLogService.log('Desktop window shown for $reason');
   } catch (error, stackTrace) {
     StartupLogService.logError(

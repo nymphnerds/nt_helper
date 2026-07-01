@@ -39,6 +39,7 @@ import 'package:nt_helper/core/routing/node_layout_algorithm.dart';
 import 'package:nt_helper/services/key_binding_service.dart';
 import 'package:nt_helper/services/mcp_server_service.dart';
 import 'package:nt_helper/services/settings_service.dart';
+import 'package:nt_helper/services/video_popup_window_service.dart';
 
 import 'package:nt_helper/ui/cpu_monitor_widget.dart';
 import 'package:nt_helper/ui/metadata_sync/metadata_sync_cubit.dart';
@@ -53,6 +54,7 @@ import 'package:nt_helper/util/extensions.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:window_manager/window_manager.dart';
 import 'package:nt_helper/models/firmware_version.dart';
 import 'package:nt_helper/ui/widgets/algorithm_list_view.dart';
 import 'package:nt_helper/ui/widgets/disting_version.dart';
@@ -216,21 +218,40 @@ class _SynchronizedScreenState extends State<SynchronizedScreen>
   void _reclaimFocusIfLost() {
     if (!_screenFocusNode.hasFocus) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted && !_screenFocusNode.hasFocus) {
-          // Don't steal focus when a dialog/bottom sheet/pushed screen is active
-          final route = ModalRoute.of(context);
-          if (route != null && !route.isCurrent) return;
-
-          // Don't steal focus from text fields (e.g. in non-route overlays)
-          final primaryFocus = FocusManager.instance.primaryFocus;
-          if (primaryFocus?.context
-                  ?.findAncestorWidgetOfExactType<EditableText>() !=
-              null) {
-            return;
-          }
-          _screenFocusNode.requestFocus();
-        }
+        unawaited(_reclaimFocusAfterFrame());
       });
+    }
+  }
+
+  Future<void> _reclaimFocusAfterFrame() async {
+    if (!mounted || _screenFocusNode.hasFocus) return;
+
+    // Don't steal focus when a dialog/bottom sheet/pushed screen is active
+    final route = ModalRoute.of(context);
+    if (route != null && !route.isCurrent) return;
+
+    // Don't steal focus from text fields (e.g. in non-route overlays)
+    final primaryFocus = FocusManager.instance.primaryFocus;
+    if (primaryFocus?.context?.findAncestorWidgetOfExactType<EditableText>() !=
+        null) {
+      return;
+    }
+
+    if (Platform.isWindows) {
+      final mainWindowFocused = await windowManager.isFocused();
+      if (!mainWindowFocused) {
+        if (kDebugMode) {
+          debugPrint(
+            '[VIDEO_POPUP_DART] SynchronizedScreen focus reclaim skipped: '
+            'main window is not focused',
+          );
+        }
+        return;
+      }
+    }
+
+    if (mounted && !_screenFocusNode.hasFocus) {
+      _screenFocusNode.requestFocus();
     }
   }
 
@@ -2750,7 +2771,39 @@ class _SynchronizedScreenState extends State<SynchronizedScreen>
 
   void _showScreenshotOverlay(BuildContext context) {
     final cubit = context.read<DistingCubit>();
+    final popupService = VideoPopupWindowService.instance;
+    if (popupService.isSupported &&
+        SettingsService().videoPopupNativeWindowEnabled) {
+      unawaited(_showVideoPopupOrFallback(context, cubit));
+      return;
+    }
 
+    _showInWindowVideoOverlay(context, cubit);
+  }
+
+  Future<void> _showVideoPopupOrFallback(
+    BuildContext context,
+    DistingCubit cubit,
+  ) async {
+    try {
+      final opened = await VideoPopupWindowService.instance.open(cubit);
+      if (opened) return;
+    } catch (_) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not open video popup; using overlay instead.'),
+          ),
+        );
+      }
+    }
+
+    if (context.mounted) {
+      _showInWindowVideoOverlay(context, cubit);
+    }
+  }
+
+  void _showInWindowVideoOverlay(BuildContext context, DistingCubit cubit) {
     // Create a VideoFrameCubit for this overlay
     final videoFrameCubit = VideoFrameCubit();
 
