@@ -32,12 +32,13 @@ fork branch   = nymph-next-fix
 fetched       = 2026-07-01
 ```
 
-Branch status after the three upstream merges and Decent structural-tag pass:
+Branch status after the four upstream merges and Decent structural-tag pass:
 
 - First upstream sync: `28419624 Merge remote-tracking branch 'upstream/main' into nymph-next-fix`.
 - Second upstream sync: `02d08a66 Merge remote-tracking branch 'upstream/main' into nymph-next-fix`.
 - Third upstream sync: `55c4fdbc Merge remote-tracking branch 'upstream/main' into nymph-next-fix`.
-- Current fork work sits on top of all three syncs and includes the structural Decent tag/import cleanup.
+- Fourth upstream sync: `30c5aef2 Merge remote-tracking branch 'upstream/main' into nymph-next-fix`.
+- Current fork work sits on top of all four syncs and includes the structural Decent tag/import cleanup.
 
 First upstream sync brought in:
 
@@ -72,6 +73,13 @@ Third upstream sync brought in:
 4fd32d79 fix(update): require platform asset before announcing release
 ```
 
+Fourth upstream sync brought in:
+
+```text
+c12d9b46 Bump version to 2.42.3+281
+ea230004 ci(windows): bundle Visual C++ runtime DLLs
+```
+
 Committed fork payload versus the fork point includes:
 
 - `lib/poly_multisample/decent_sampler_converter.dart`
@@ -94,7 +102,7 @@ Current fork work in this handoff:
 - `README.md`
 - `docs/NYMPHS_FORK_HANDOFF.md`
 
-Direct diff from current working tree to `upstream/main` is larger because it includes both the fork feature work and upstream video/Flutter changes that are not merged into this branch yet.
+Direct diff from current working tree to `upstream/main` is larger because it includes the fork feature work that is not in developer main.
 
 ## Loose WAV Import
 
