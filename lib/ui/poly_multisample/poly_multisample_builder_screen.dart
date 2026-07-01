@@ -1664,8 +1664,8 @@ class _DecentImportOptionsDialogState
       0,
       (total, group) => total + group.sampleCount,
     );
-    final preferredLayerKeys = _preferredDefaultLayerKeys(tags, totalSamples);
-    if (preferredLayerKeys.isNotEmpty) return preferredLayerKeys;
+    final structuralKeys = _structureDefaultTagKeys(tags, totalSamples);
+    if (structuralKeys.isNotEmpty) return structuralKeys;
     final candidates =
         [
           _tagAxisCandidate(tags, groups, totalSamples, 'instrument', {
@@ -1692,29 +1692,82 @@ class _DecentImportOptionsDialogState
     };
   }
 
-  Set<String> _preferredDefaultLayerKeys(
+  Set<String> _structureDefaultTagKeys(
     List<DecentSamplerTag> tags,
     int totalSamples,
   ) {
-    final layerTags = tags.where((tag) {
-      return tag.role == DecentSamplerTagRole.layer &&
-          (totalSamples == 0 || tag.sampleCount < totalSamples);
+    final usableTags = tags.where((tag) {
+      if (tag.sampleCount <= 0) return false;
+      if (totalSamples > 0 && tag.sampleCount >= totalSamples) return false;
+      return true;
     }).toList();
-    if (layerTags.isEmpty) return {};
+    if (usableTags.isEmpty) return {};
 
-    final preferred = layerTags
-        .where((tag) => _isPreferredBaseLayerLabel(tag.label))
-        .toList();
-    if (preferred.isEmpty) return {};
+    final byStructure = <String, List<DecentSamplerTag>>{};
+    for (final tag in usableTags) {
+      byStructure
+          .putIfAbsent(_tagStructureSignature(tag), () => <DecentSamplerTag>[])
+          .add(tag);
+    }
 
-    preferred.sort((a, b) {
-      final rank = _baseLayerRank(a.label).compareTo(_baseLayerRank(b.label));
-      if (rank != 0) return rank;
+    final selected = <String>{};
+    for (final lane in byStructure.values) {
+      if (lane.length == 1) {
+        selected.add(lane.single.key);
+        continue;
+      }
+      if (lane.every((tag) => tag.role == DecentSamplerTagRole.dynamic) ||
+          lane.every((tag) => tag.role == DecentSamplerTagRole.roundRobin)) {
+        selected.addAll(lane.map((tag) => tag.key));
+        continue;
+      }
+      final preferred = _bestDefaultTagForSharedStructure(lane);
+      if (preferred != null) selected.add(preferred.key);
+    }
+    return selected;
+  }
+
+  String _tagStructureSignature(DecentSamplerTag tag) {
+    return [
+      tag.defaultLowMidi,
+      tag.defaultRootMidi,
+      tag.defaultHighMidi,
+      tag.velocitySummary,
+      tag.roundRobinSummary,
+      tag.noteRange,
+    ].join('|');
+  }
+
+  DecentSamplerTag? _bestDefaultTagForSharedStructure(
+    List<DecentSamplerTag> tags,
+  ) {
+    if (tags.isEmpty) return null;
+    final ranked = List<DecentSamplerTag>.of(tags);
+    ranked.sort((a, b) {
+      final baseRank = _baseLayerRank(
+        a.label,
+      ).compareTo(_baseLayerRank(b.label));
+      if (baseRank != 0) return baseRank;
+      final roleRank = _tagDefaultRoleRank(
+        a.role,
+      ).compareTo(_tagDefaultRoleRank(b.role));
+      if (roleRank != 0) return roleRank;
       final countCompare = b.sampleCount.compareTo(a.sampleCount);
       if (countCompare != 0) return countCompare;
       return a.label.toLowerCase().compareTo(b.label.toLowerCase());
     });
-    return {preferred.first.key};
+    return ranked.first;
+  }
+
+  int _tagDefaultRoleRank(DecentSamplerTagRole role) {
+    return switch (role) {
+      DecentSamplerTagRole.instrument => 0,
+      DecentSamplerTagRole.group => 1,
+      DecentSamplerTagRole.articulation => 2,
+      DecentSamplerTagRole.layer => 3,
+      DecentSamplerTagRole.dynamic => 4,
+      DecentSamplerTagRole.roundRobin => 5,
+    };
   }
 
   _TagAxisCandidate? _tagAxisCandidate(

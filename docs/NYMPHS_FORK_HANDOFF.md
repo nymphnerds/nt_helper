@@ -162,7 +162,9 @@ Tag rows show a short plain-language reason line. Avoid raw XML wording in the m
 
 Current v6 behaviour is slightly more practical than the earlier reason-line design: rows show concise action/consequence notes based on the selected mapping mode. For Keep Decent map, examples include `XML velocity kept`, `XML RR kept`, `source/mic layer is fixed`, and `Decent switching may not translate`. Tooltips carry the fuller XML evidence.
 
-The full-library tag scan showed that baseline source/tone tags should be preferred when a library exposes variants. Examples: `raw` over `buzz/gloss`, `dry` over `glitch/jitter/air/wave`, `natural` over `hyped`, `close` over `room`, `front` over `back/feet`, `DrySig` over `CVSig/OSSig`, and `Tron` over `Tape`. Pure numeric tags and `Channel 1` style labels are usually Decent UI/index labels and should not be promoted as musical tag choices.
+Default tag selection must be structure-first. Build Disting lanes from the XML-derived `Low`, `Root`, note range, velocity summary, and RR summary. Tags in different lanes can be included together by default because they do not collide. Tags sharing the same lane are alternatives; choose one default for that lane unless the lane clearly represents dynamics or round robins that should stay together. Baseline names such as `raw`, `dry`, `natural`, `clean`, `direct`, `close`, `front`, `DrySig`, or `Tron` are only tie-breakers inside a shared structural lane, not the main decision logic.
+
+The full-library tag scan still gives useful tie-breaker hints: prefer `raw` over `buzz/gloss`, `dry` over `glitch/jitter/air/wave`, `natural` over `hyped`, `close` over `room`, `front` over `back/feet`, `DrySig` over `CVSig/OSSig`, and `Tron` over `Tape` when those labels describe structurally equivalent alternatives. Pure numeric tags and `Channel 1` style labels are usually Decent UI/index labels and should not be promoted as musical tag choices.
 
 ## XML Fidelity Rules
 

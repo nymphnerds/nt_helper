@@ -3,8 +3,8 @@
 ## Poly Multisample Builder Test Release Changelog
 
 Branch: `nymph-next-fix`
-Tag: `poly-multisample-builder-test-v7`
-Windows zip: `nt_helper-windows-poly-multisample-builder-test-v7.zip`
+Tag: `poly-multisample-builder-test-v8`
+Windows zip: `nt_helper-windows-poly-multisample-builder-test-v8.zip`
 
 This fork/branch contains an experimental Windows test build for a new Poly Multisample Builder in NT Helper.
 
@@ -27,6 +27,14 @@ This fork/branch contains an experimental Windows test build for a new Poly Mult
 - Treats `Dry` as a preferred baseline/source tag instead of excluding it as an optional mic/source layer.
 - Classifies texture/source variants such as `Glitch`, `Jitter`, `Air`, and `Wave` as layer choices, so the default Decent tag selection can prefer the clean baseline where available.
 - Adds regression coverage for Dry plus texture-variant tag roles.
+
+### 2026-07-01 Structure-First Tag Defaults
+
+- Changes Decent tag checkbox defaults to use the XML-derived sample structure first.
+- Groups tags into Disting lanes using Low, Root, note range, velocity summary, and RR summary.
+- Includes tags from different non-colliding lanes by default.
+- When multiple tags share the same lane, treats them as alternatives and picks one default for that lane.
+- Uses names such as `Dry`, `Raw`, or `Clean` only as a tie-breaker inside structurally equivalent alternatives.
 
 ### 2026-06-29 Custom Import Mapping Polish
 
