@@ -32,19 +32,35 @@ fork branch   = nymph-next-fix
 fetched       = 2026-07-01
 ```
 
-Branch status after the current upstream merge and Decent structural-tag pass:
+Branch status after the two upstream merges and Decent structural-tag pass:
 
-- `upstream/main` was fetched and merged into `nymph-next-fix` on 2026-07-01.
-- The current working tree has the structural Decent tag/import cleanup work ready to commit.
+- First upstream sync: `28419624 Merge remote-tracking branch 'upstream/main' into nymph-next-fix`.
+- Second upstream sync: `02d08a66 Merge remote-tracking branch 'upstream/main' into nymph-next-fix`.
+- Current fork work sits on top of both syncs and includes the structural Decent tag/import cleanup.
 
-Recent upstream commits merged into this fork include:
+First upstream sync brought in:
 
 ```text
+118498c3 Bump version to 2.42.0+278
+c9a138d3 chore(video): gate popup diagnostics to debug builds
+c24dd66e fix(video): avoid reclaiming focus from Windows popup
+c90b68f0 fix(video): keep popup activation on top-level HWND
+14b8a9b4 fix(video): avoid hidden popup focus activation
+f6d9d49a fix(video): avoid stealing focus from Windows popup
+aa7e5474 chore(video): log Windows popup focus diagnostics
+b2d8a6a5 fix(video): replace Windows popup backend
 81d18f5d fix(video): hide Linux popup on close
 5aefedf0 fix(video): keep Linux popup close local
 076277f7 ci: update flutter version
 bb736ce1 build: upgrade flutter midi command
 42882f45 feat(video): add opt-in floating popup window
+```
+
+Second upstream sync brought in:
+
+```text
+d1b137b0 Bump version to 2.42.1+279
+5521c736 fix(midi): preserve Windows MIDI discovery after disconnect
 ```
 
 Committed fork payload versus the fork point includes:

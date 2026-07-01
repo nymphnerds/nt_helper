@@ -8,6 +8,12 @@ Windows zip: `nt_helper-windows-poly-multisample-builder-test-v9.zip`
 
 This fork/branch contains an experimental Windows test build for a new Poly Multisample Builder in NT Helper.
 
+### 2026-07-01 Upstream Syncs
+
+- Merged developer `upstream/main` into `nymph-next-fix` at `28419624`, bringing in the v2.42.0+278 baseline plus the Windows/video popup backend, focus, activation, and debug-diagnostics fixes from developer main.
+- Merged developer `upstream/main` again at `02d08a66`, bringing in v2.42.1+279 and the Windows MIDI discovery/disconnect preservation fix.
+- Current fork work now sits on top of those upstream syncs rather than an older developer-main baseline.
+
 ### 2026-07-01 Structural Decent Tag Logic
 
 - Decent tag/group rows now describe the actual sample structure found in the XML, not a guessed role from names like `Dry`, `Tape`, `raw`, `mic`, or `noise`.
