@@ -32,11 +32,12 @@ fork branch   = nymph-next-fix
 fetched       = 2026-07-01
 ```
 
-Branch status after the two upstream merges and Decent structural-tag pass:
+Branch status after the three upstream merges and Decent structural-tag pass:
 
 - First upstream sync: `28419624 Merge remote-tracking branch 'upstream/main' into nymph-next-fix`.
 - Second upstream sync: `02d08a66 Merge remote-tracking branch 'upstream/main' into nymph-next-fix`.
-- Current fork work sits on top of both syncs and includes the structural Decent tag/import cleanup.
+- Third upstream sync: `55c4fdbc Merge remote-tracking branch 'upstream/main' into nymph-next-fix`.
+- Current fork work sits on top of all three syncs and includes the structural Decent tag/import cleanup.
 
 First upstream sync brought in:
 
@@ -61,6 +62,14 @@ Second upstream sync brought in:
 ```text
 d1b137b0 Bump version to 2.42.1+279
 5521c736 fix(midi): preserve Windows MIDI discovery after disconnect
+```
+
+Third upstream sync brought in:
+
+```text
+0588394c Bump version to 2.42.2+280
+494a8b60 fix(update): harden Windows updater install script
+4fd32d79 fix(update): require platform asset before announcing release
 ```
 
 Committed fork payload versus the fork point includes:

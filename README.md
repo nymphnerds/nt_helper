@@ -12,6 +12,7 @@ This fork/branch contains an experimental Windows test build for a new Poly Mult
 
 - Merged developer `upstream/main` into `nymph-next-fix` at `28419624`, bringing in the v2.42.0+278 baseline plus the Windows/video popup backend, focus, activation, and debug-diagnostics fixes from developer main.
 - Merged developer `upstream/main` again at `02d08a66`, bringing in v2.42.1+279 and the Windows MIDI discovery/disconnect preservation fix.
+- Merged developer `upstream/main` again at `55c4fdbc`, bringing in v2.42.2+280 plus Windows updater hardening and platform-asset release checks.
 - Current fork work now sits on top of those upstream syncs rather than an older developer-main baseline.
 
 ### 2026-07-01 Structural Decent Tag Logic

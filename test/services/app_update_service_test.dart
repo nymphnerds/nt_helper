@@ -279,7 +279,10 @@ void main() {
         tempDir,
       );
 
-      expect(releaseRoot?.path, nestedDir.path);
+      expect(
+        releaseRoot?.path.replaceAll(r'\', '/'),
+        nestedDir.path.replaceAll(r'\', '/'),
+      );
     });
 
     test('buildWindowsUpdateScript logs, unblocks, and relaunches', () {
