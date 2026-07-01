@@ -32,13 +32,14 @@ fork branch   = nymph-next-fix
 fetched       = 2026-07-01
 ```
 
-Branch status after the four upstream merges and Decent structural-tag pass:
+Branch status after the five upstream merges and Decent structural-tag pass:
 
 - First upstream sync: `28419624 Merge remote-tracking branch 'upstream/main' into nymph-next-fix`.
 - Second upstream sync: `02d08a66 Merge remote-tracking branch 'upstream/main' into nymph-next-fix`.
 - Third upstream sync: `55c4fdbc Merge remote-tracking branch 'upstream/main' into nymph-next-fix`.
 - Fourth upstream sync: `30c5aef2 Merge remote-tracking branch 'upstream/main' into nymph-next-fix`.
-- Current fork work sits on top of all four syncs and includes the structural Decent tag/import cleanup.
+- Fifth upstream sync: `0077f24b Merge remote-tracking branch 'upstream/main' into nymph-next-fix`.
+- Current fork work sits on top of all five syncs and includes the structural Decent tag/import cleanup.
 
 First upstream sync brought in:
 
@@ -78,6 +79,15 @@ Fourth upstream sync brought in:
 ```text
 c12d9b46 Bump version to 2.42.3+281
 ea230004 ci(windows): bundle Visual C++ runtime DLLs
+```
+
+Fifth upstream sync brought in:
+
+```text
+662c2199 Bump version to 2.42.5+283
+fed33a75 fix(windows): harden USB video capture threading
+fc2dea2d Bump version to 2.42.4+282
+c88dcca8 feat(windows): publish Inno Setup installer
 ```
 
 Committed fork payload versus the fork point includes:

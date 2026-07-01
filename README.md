@@ -14,6 +14,7 @@ This fork/branch contains an experimental Windows test build for a new Poly Mult
 - Merged developer `upstream/main` again at `02d08a66`, bringing in v2.42.1+279 and the Windows MIDI discovery/disconnect preservation fix.
 - Merged developer `upstream/main` again at `55c4fdbc`, bringing in v2.42.2+280 plus Windows updater hardening and platform-asset release checks.
 - Merged developer `upstream/main` again at `30c5aef2`, bringing in v2.42.3+281 and the Windows CI VC++ runtime bundling update.
+- Merged developer `upstream/main` again at `0077f24b`, bringing in v2.42.5+283, the Windows Inno Setup installer workflow, and USB video capture threading hardening.
 - Current fork work now sits on top of those upstream syncs rather than an older developer-main baseline.
 
 ### 2026-07-01 Structural Decent Tag Logic
