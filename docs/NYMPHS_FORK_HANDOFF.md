@@ -158,13 +158,19 @@ Preset selection must happen first. If a library has multiple presets, choose on
 
 Tags are usually the musical choice. Groups remain available because some libraries only expose useful structure through XML group names. If Tags and Groups mirror each other, hide the redundant switch and use Tags.
 
-Tag rows show a short plain-language reason line. Avoid raw XML wording in the main UI. The user should see ideas like `Included: looks like a mic, tone, or sound layer` or `Not included: looks like a playing style; current default is mic/tone layer`. Groups should be described as Decent's internal sample sections, not as something the user must understand technically.
+Decent tag/group choices should start unchecked. Do not auto-select material and do not show suggestions about what the user should choose. Decent libraries are too inconsistent for that to be reliable. The dialog should show facts and controls, then let the user preview and select the material explicitly.
 
-Current v6 behaviour is slightly more practical than the earlier reason-line design: rows show concise action/consequence notes based on the selected mapping mode. For Keep Decent map, examples include `XML velocity kept`, `XML RR kept`, `source/mic layer is fixed`, and `Decent switching may not translate`. Tooltips carry the fuller XML evidence.
+Tag/group rows should show:
 
-Default tag selection must be structure-first. Build Disting lanes from the XML-derived `Low`, `Root`, note range, velocity summary, and RR summary. Tags in different lanes can be included together by default because they do not collide. Tags sharing the same lane are alternatives; choose one default for that lane unless the lane clearly represents dynamics or round robins that should stay together. Baseline names such as `raw`, `dry`, `natural`, `clean`, `direct`, `close`, `front`, `DrySig`, or `Tron` are only tie-breakers inside a shared structural lane, not the main decision logic.
+- checkbox
+- preview
+- label
+- sample count
+- Disting mapping controls when applicable: `Low`, `Root`, `Vel`, `RR`
 
-The full-library tag scan still gives useful tie-breaker hints: prefer `raw` over `buzz/gloss`, `dry` over `glitch/jitter/air/wave`, `natural` over `hyped`, `close` over `room`, `front` over `back/feet`, `DrySig` over `CVSig/OSSig`, and `Tron` over `Tape` when those labels describe structurally equivalent alternatives. Pure numeric tags and `Channel 1` style labels are usually Decent UI/index labels and should not be promoted as musical tag choices.
+Row text should describe XML/mapping facts only, such as `XML velocity kept`, `XML RR kept`, `source/mic layer is fixed`, or `Decent switching may not translate`. Tooltips can carry fuller XML evidence. Avoid `Included`, `Not included`, `Suggested`, or baseline-default wording.
+
+Tag role parsing can stay for sorting, tooltips, conservative junk filtering, and tests. It must not decide what is selected by default.
 
 ## XML Fidelity Rules
 

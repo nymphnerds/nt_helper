@@ -819,15 +819,14 @@ class _DecentImportOptionsDialogState
     _mappingAxis = _visibleTags.isNotEmpty
         ? _DecentMappingAxis.tags
         : _DecentMappingAxis.groups;
-    _selectedGroupKeys = {for (final group in _visibleGroups) group.key};
+    _selectedGroupKeys = {};
     _groupVelocityLayers = _defaultGroupVelocityLayers(_selectedGroupKeys);
     _groupKeyRanges = _defaultGroupKeyRanges(_selectedGroupKeys);
     _groupRoundRobins = _defaultGroupRoundRobins(_selectedGroupKeys);
-    _selectedTagKeys = _defaultSelectedTagKeys(_visibleTags, _visibleGroups);
+    _selectedTagKeys = {};
     _tagVelocityLayers = _defaultTagVelocityLayers(_selectedTagKeys);
     _tagKeyRanges = _defaultTagKeyRanges(_selectedTagKeys);
     _tagRoundRobins = _defaultTagRoundRobins(_selectedTagKeys);
-    _markDefaultEditedTagMappingIfUseful();
     _previewCompleteSubscription = _previewPlayer.onPlayerComplete.listen((_) {
       if (!mounted) return;
       setState(() => _previewingChoiceKey = null);
@@ -839,24 +838,6 @@ class _DecentImportOptionsDialogState
     _previewCompleteSubscription?.cancel();
     _previewPlayer.dispose();
     super.dispose();
-  }
-
-  bool get _selectedTagsLookLikeDynamics {
-    if (_selectedTagKeys.length < 2) return false;
-    final selected = _visibleTags
-        .where((tag) => _selectedTagKeys.contains(tag.key))
-        .toList();
-    if (selected.length < 2) return false;
-    return selected.every((tag) => tag.role == DecentSamplerTagRole.dynamic);
-  }
-
-  void _markDefaultEditedTagMappingIfUseful() {
-    if (_mappingAxis != _DecentMappingAxis.tags ||
-        !_selectedTagsLookLikeDynamics) {
-      return;
-    }
-    _decentQuickMapping = _DecentQuickMapping.velocityLayers;
-    _applyDecentQuickMappingToState();
   }
 
   @override
@@ -900,6 +881,14 @@ class _DecentImportOptionsDialogState
                   onChanged: (axis) => setState(() {
                     _mappingAxis = axis;
                     _decentQuickMapping = _DecentQuickMapping.keepXml;
+                    _selectedTagKeys.clear();
+                    _selectedGroupKeys.clear();
+                    _tagVelocityLayers = {};
+                    _tagKeyRanges = {};
+                    _tagRoundRobins = {};
+                    _groupVelocityLayers = {};
+                    _groupKeyRanges = {};
+                    _groupRoundRobins = {};
                     _clearEditedDecentMapping();
                   }),
                 ),
@@ -1098,21 +1087,19 @@ class _DecentImportOptionsDialogState
 
   void _resetSelectionsForCurrentPreset() {
     final tags = _visibleTags;
-    final groups = _visibleGroups;
     _mappingAxis = tags.isNotEmpty
         ? _DecentMappingAxis.tags
         : _DecentMappingAxis.groups;
-    _selectedGroupKeys = {for (final group in groups) group.key};
+    _selectedGroupKeys = {};
     _groupVelocityLayers = _defaultGroupVelocityLayers(_selectedGroupKeys);
     _groupKeyRanges = _defaultGroupKeyRanges(_selectedGroupKeys);
     _groupRoundRobins = _defaultGroupRoundRobins(_selectedGroupKeys);
-    _selectedTagKeys = _defaultSelectedTagKeys(tags, groups);
+    _selectedTagKeys = {};
     _tagVelocityLayers = _defaultTagVelocityLayers(_selectedTagKeys);
     _tagKeyRanges = _defaultTagKeyRanges(_selectedTagKeys);
     _tagRoundRobins = _defaultTagRoundRobins(_selectedTagKeys);
     _decentQuickMapping = _DecentQuickMapping.keepXml;
     _clearEditedDecentMapping();
-    _markDefaultEditedTagMappingIfUseful();
   }
 
   void _toggleTag(String key) {
@@ -1654,196 +1641,6 @@ class _DecentImportOptionsDialogState
         if (selectedKeys.contains(group.key)) group.key: 1,
     };
   }
-
-  Set<String> _defaultSelectedTagKeys(
-    List<DecentSamplerTag> tags,
-    List<DecentSamplerGroupInfo> groups,
-  ) {
-    if (tags.isEmpty) return {};
-    final totalSamples = groups.fold<int>(
-      0,
-      (total, group) => total + group.sampleCount,
-    );
-    final structuralKeys = _structureDefaultTagKeys(tags, totalSamples);
-    if (structuralKeys.isNotEmpty) return structuralKeys;
-    final candidates =
-        [
-          _tagAxisCandidate(tags, groups, totalSamples, 'instrument', {
-            DecentSamplerTagRole.instrument,
-            DecentSamplerTagRole.group,
-          }),
-          _tagAxisCandidate(tags, groups, totalSamples, 'articulation', {
-            DecentSamplerTagRole.articulation,
-          }),
-          _tagAxisCandidate(tags, groups, totalSamples, 'dynamic', {
-            DecentSamplerTagRole.dynamic,
-          }),
-          _tagAxisCandidate(tags, groups, totalSamples, 'layer', {
-            DecentSamplerTagRole.layer,
-          }),
-        ].whereType<_TagAxisCandidate>().toList()..sort((a, b) {
-          final score = b.score.compareTo(a.score);
-          return score != 0 ? score : a.name.compareTo(b.name);
-        });
-    if (candidates.isNotEmpty) return candidates.first.keys;
-    return {
-      for (final tag in tags)
-        if (totalSamples == 0 || tag.sampleCount < totalSamples) tag.key,
-    };
-  }
-
-  Set<String> _structureDefaultTagKeys(
-    List<DecentSamplerTag> tags,
-    int totalSamples,
-  ) {
-    final usableTags = tags.where((tag) {
-      if (tag.sampleCount <= 0) return false;
-      if (totalSamples > 0 && tag.sampleCount >= totalSamples) return false;
-      return true;
-    }).toList();
-    if (usableTags.isEmpty) return {};
-
-    final byStructure = <String, List<DecentSamplerTag>>{};
-    for (final tag in usableTags) {
-      byStructure
-          .putIfAbsent(_tagStructureSignature(tag), () => <DecentSamplerTag>[])
-          .add(tag);
-    }
-
-    final selected = <String>{};
-    for (final lane in byStructure.values) {
-      if (lane.length == 1) {
-        selected.add(lane.single.key);
-        continue;
-      }
-      if (lane.every((tag) => tag.role == DecentSamplerTagRole.dynamic) ||
-          lane.every((tag) => tag.role == DecentSamplerTagRole.roundRobin)) {
-        selected.addAll(lane.map((tag) => tag.key));
-        continue;
-      }
-      final preferred = _bestDefaultTagForSharedStructure(lane);
-      if (preferred != null) selected.add(preferred.key);
-    }
-    return selected;
-  }
-
-  String _tagStructureSignature(DecentSamplerTag tag) {
-    return [
-      tag.defaultLowMidi,
-      tag.defaultRootMidi,
-      tag.defaultHighMidi,
-      tag.velocitySummary,
-      tag.roundRobinSummary,
-      tag.noteRange,
-    ].join('|');
-  }
-
-  DecentSamplerTag? _bestDefaultTagForSharedStructure(
-    List<DecentSamplerTag> tags,
-  ) {
-    if (tags.isEmpty) return null;
-    final ranked = List<DecentSamplerTag>.of(tags);
-    ranked.sort((a, b) {
-      final baseRank = _baseLayerRank(
-        a.label,
-      ).compareTo(_baseLayerRank(b.label));
-      if (baseRank != 0) return baseRank;
-      final roleRank = _tagDefaultRoleRank(
-        a.role,
-      ).compareTo(_tagDefaultRoleRank(b.role));
-      if (roleRank != 0) return roleRank;
-      final countCompare = b.sampleCount.compareTo(a.sampleCount);
-      if (countCompare != 0) return countCompare;
-      return a.label.toLowerCase().compareTo(b.label.toLowerCase());
-    });
-    return ranked.first;
-  }
-
-  int _tagDefaultRoleRank(DecentSamplerTagRole role) {
-    return switch (role) {
-      DecentSamplerTagRole.instrument => 0,
-      DecentSamplerTagRole.group => 1,
-      DecentSamplerTagRole.articulation => 2,
-      DecentSamplerTagRole.layer => 3,
-      DecentSamplerTagRole.dynamic => 4,
-      DecentSamplerTagRole.roundRobin => 5,
-    };
-  }
-
-  _TagAxisCandidate? _tagAxisCandidate(
-    List<DecentSamplerTag> tags,
-    List<DecentSamplerGroupInfo> groups,
-    int totalSamples,
-    String name,
-    Set<DecentSamplerTagRole> roles,
-  ) {
-    final matchingTags = tags.where((tag) {
-      if (!roles.contains(tag.role)) return false;
-      return totalSamples == 0 || tag.sampleCount < totalSamples;
-    }).toList();
-    if (matchingTags.isEmpty) return null;
-    final keys = {for (final tag in matchingTags) tag.key};
-    final coveredGroups = <String>{};
-    var coveredSamples = 0;
-    for (final tag in matchingTags) {
-      coveredGroups.addAll(tag.groupKeys);
-      coveredSamples += tag.sampleCount;
-    }
-    final coverage = totalSamples == 0
-        ? 0.0
-        : math.min(1.0, coveredSamples / totalSamples);
-    final groupCoverage = groups.isEmpty
-        ? 0.0
-        : coveredGroups.length / groups.length;
-    final countScore = math.min(matchingTags.length, 12) / 12.0;
-    final roleWeight = switch (name) {
-      'instrument' => 1.0,
-      'articulation' => 0.92,
-      'dynamic' => 0.82,
-      'layer' => 0.45,
-      _ => 0.3,
-    };
-    final score =
-        roleWeight + (coverage * 0.8) + (groupCoverage * 0.5) + countScore;
-    return _TagAxisCandidate(name: name, keys: keys, score: score);
-  }
-}
-
-bool _isPreferredBaseLayerLabel(String label) {
-  return _baseLayerRank(label) < 100;
-}
-
-int _baseLayerRank(String label) {
-  final key = label.trim().toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '');
-  return switch (key) {
-    'raw' => 0,
-    'original' => 1,
-    'orig' => 1,
-    'natural' => 2,
-    'clean' => 3,
-    'dry' => 4,
-    'drysig' => 4,
-    'direct' => 5,
-    'di' => 5,
-    'close' => 6,
-    'front' => 7,
-    'mono' => 8,
-    'stereo' => 9,
-    'tron' => 10,
-    _ => 100,
-  };
-}
-
-class _TagAxisCandidate {
-  const _TagAxisCandidate({
-    required this.name,
-    required this.keys,
-    required this.score,
-  });
-
-  final String name;
-  final Set<String> keys;
-  final double score;
 }
 
 class _DecentImportSummaryPanel extends StatelessWidget {
@@ -1892,14 +1689,6 @@ class _DecentImportSummaryPanel extends StatelessWidget {
               facts.interpretation,
               style: theme.textTheme.bodyMedium?.copyWith(
                 color: colorScheme.onSurfaceVariant,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              facts.recommendation,
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: colorScheme.primary,
-                fontWeight: FontWeight.w700,
               ),
             ),
           ],
@@ -2162,9 +1951,7 @@ class _TagSelectionPanel extends StatelessWidget {
         ),
         const SizedBox(height: 6),
         Text(
-          customMapping
-              ? 'Tags are labels from the Decent file. Select the sounds you want, then edit Low, Root, Vel, or RR on any row you want to override.'
-              : 'Tags are labels from the Decent file. Checked tags will be imported; unchecked tags were left out because they look like a different kind of label.',
+          'Tags are labels from the Decent file. Preview rows, select the material you want, then edit Low, Root, Vel, or RR if needed.',
           style: theme.textTheme.bodySmall?.copyWith(
             color: theme.colorScheme.onSurfaceVariant,
           ),
@@ -2181,11 +1968,7 @@ class _TagSelectionPanel extends StatelessWidget {
                 _TagCheckboxRow(
                   tag: tags[index],
                   selected: selectedKeys.contains(tags[index].key),
-                  note: _tagSelectionNote(
-                    tags[index],
-                    selected: selectedKeys.contains(tags[index].key),
-                    mappingMode: mappingMode,
-                  ),
+                  note: _tagXmlNote(tags[index], mappingMode: mappingMode),
                   velocityEdited: editedVelocityKeys.contains(tags[index].key),
                   rangeEdited: editedRangeKeys.contains(tags[index].key),
                   roundRobinEdited: editedRoundRobinKeys.contains(
@@ -2220,38 +2003,26 @@ class _TagSelectionPanel extends StatelessWidget {
     );
   }
 
-  static String _tagSelectionNote(
+  static String _tagXmlNote(
     DecentSamplerTag tag, {
-    required bool selected,
     required _DecentQuickMapping mappingMode,
   }) {
-    final shortRole = _tagShortRoleLabel(tag.role);
-    if (!selected) {
-      return 'Not included: $shortRole';
-    }
     if (mappingMode == _DecentQuickMapping.unmapped) {
-      return 'Will be added unmapped';
+      return 'Add unmapped';
     }
     if (mappingMode == _DecentQuickMapping.keepXml) {
       return _tagKeepXmlNote(tag);
     }
     if (mappingMode == _DecentQuickMapping.chromatic) {
-      return 'Mapped chromatically; edit row to override';
+      return 'Chromatic mapping';
     }
     if (mappingMode == _DecentQuickMapping.velocityLayers) {
-      return 'Mapped as a velocity layer; edit Vel if needed';
+      return 'Velocity-layer mapping';
     }
     if (mappingMode == _DecentQuickMapping.roundRobins) {
-      return 'Mapped as a round robin; edit RR if needed';
+      return 'Round-robin mapping';
     }
-    if (tag.role == DecentSamplerTagRole.layer) {
-      final base = _isPreferredBaseLayerLabel(tag.label);
-      if (base) {
-        return 'Included: main source';
-      }
-      return 'Included: source/mic layer';
-    }
-    return 'Included: $shortRole';
+    return 'Decent tag';
   }
 
   static String _tagKeepXmlNote(DecentSamplerTag tag) {
@@ -2267,7 +2038,7 @@ class _TagSelectionPanel extends StatelessWidget {
     } else if (tag.role == DecentSamplerTagRole.articulation) {
       notes.add('Decent switching may not translate');
     }
-    if (notes.isEmpty) return 'XML map kept; edit row to override';
+    if (notes.isEmpty) return 'XML map';
     return notes.join(' · ');
   }
 }
@@ -2353,9 +2124,7 @@ class _GroupMappingPanel extends StatelessWidget {
         ),
         const SizedBox(height: 6),
         Text(
-          customMapping
-              ? 'Groups are Decent\'s internal sample sections. Select the sections you want, then edit Low, Root, Vel, or RR on any row you want to override.'
-              : 'Groups are Decent\'s internal sample sections. Select the sections to include.',
+          'Groups are Decent\'s internal sample sections. Preview rows, select the material you want, then edit Low, Root, Vel, or RR if needed.',
           style: theme.textTheme.bodySmall?.copyWith(
             color: theme.colorScheme.onSurfaceVariant,
           ),
@@ -2372,11 +2141,7 @@ class _GroupMappingPanel extends StatelessWidget {
                 _GroupMappingRow(
                   group: groups[index],
                   selected: selectedKeys.contains(groups[index].key),
-                  note: _groupSelectionNote(
-                    groups[index],
-                    selected: selectedKeys.contains(groups[index].key),
-                    mappingMode: mappingMode,
-                  ),
+                  note: _groupXmlNote(groups[index], mappingMode: mappingMode),
                   velocityEdited: editedVelocityKeys.contains(
                     groups[index].key,
                   ),
@@ -2413,23 +2178,21 @@ class _GroupMappingPanel extends StatelessWidget {
     );
   }
 
-  static String _groupSelectionNote(
+  static String _groupXmlNote(
     DecentSamplerGroupInfo group, {
-    required bool selected,
     required _DecentQuickMapping mappingMode,
   }) {
-    if (!selected) return 'Not included';
     if (mappingMode == _DecentQuickMapping.unmapped) {
-      return 'Will be added unmapped';
+      return 'Add unmapped';
     }
     if (mappingMode == _DecentQuickMapping.chromatic) {
-      return 'Mapped chromatically; edit row to override';
+      return 'Chromatic mapping';
     }
     if (mappingMode == _DecentQuickMapping.velocityLayers) {
-      return 'Mapped as a velocity layer; edit Vel if needed';
+      return 'Velocity-layer mapping';
     }
     if (mappingMode == _DecentQuickMapping.roundRobins) {
-      return 'Mapped as a round robin; edit RR if needed';
+      return 'Round-robin mapping';
     }
 
     final notes = <String>[];
@@ -2442,7 +2205,7 @@ class _GroupMappingPanel extends StatelessWidget {
     if (_groupHasDecentOnlyControls(group)) {
       notes.add('Decent controls may not translate');
     }
-    if (notes.isEmpty) return 'XML map kept; edit row to override';
+    if (notes.isEmpty) return 'XML map';
     return notes.join(' · ');
   }
 
@@ -2894,7 +2657,6 @@ class _DecentImportFacts {
     required this.velocityRangeCount,
     required this.controllerSummary,
     required this.interpretation,
-    required this.recommendation,
   });
 
   final int presetCount;
@@ -2906,7 +2668,6 @@ class _DecentImportFacts {
   final int velocityRangeCount;
   final String controllerSummary;
   final String interpretation;
-  final String recommendation;
 
   factory _DecentImportFacts.from(DecentSamplerImportAnalysis analysis) {
     final groups = analysis.groups;
@@ -2950,41 +2711,8 @@ class _DecentImportFacts {
 
     final hasPresetChoices = analysis.presets.length > 1;
     final hasTags = analysis.tags.isNotEmpty;
-    final recommendation = switch (analysis.recommendedGroupHandling) {
-      DecentSamplerGroupHandling.splitFolders =>
-        hasTags
-            ? 'Suggested: choose one tag if you want a single variant, or keep the selected tags together.'
-            : 'Suggested: choose one XML group if only one group should become this folder.',
-      DecentSamplerGroupHandling.velocityLayers =>
-        hasTags
-            ? 'Suggested: map selected dynamic tags as velocity layers.'
-            : 'Suggested: map matched XML groups as velocity layers.',
-      DecentSamplerGroupHandling.tagMapping =>
-        'Suggested: map selected tags to velocity layers and/or key ranges.',
-      DecentSamplerGroupHandling.keyRanges =>
-        'Suggested: map selected tags to key ranges.',
-      DecentSamplerGroupHandling.selectedGroup =>
-        'Suggested: convert one XML group only.',
-      DecentSamplerGroupHandling.selectedTags =>
-        'Suggested: stage one selected tag as this folder.',
-      DecentSamplerGroupHandling.auto =>
-        hasTags
-            ? 'Suggested: keep the selected tags with default XML mapping.'
-            : hasPresetChoices
-            ? 'Suggested: choose one preset and keep its default XML mapping.'
-            : 'Suggested: keep the default XML mapping.',
-    };
-
     final interpretation = hasPresetChoices
         ? 'This library contains multiple Decent presets. This builder stages one Poly Multisample folder, so choose one preset to work on.'
-        : hasTags &&
-              analysis.recommendedGroupHandling ==
-                  DecentSamplerGroupHandling.velocityLayers
-        ? 'The selected tags look like matched dynamic layers for the same notes. Velocity-layer mapping should keep those layers together while preserving round robins.'
-        : hasTags &&
-              analysis.recommendedGroupHandling ==
-                  DecentSamplerGroupHandling.splitFolders
-        ? 'The tags look like separate sound choices such as mics, tone/tape variants, sources, or articulations. For this one-folder workflow, choose the tag you want or keep selected tags together.'
         : hasControllerBindings
         ? 'Decent uses UI controls for group volume or switching. Disting NT cannot reproduce those controls directly, so choose the closest static mapping below.'
         : velocityRanges.length > 1
@@ -2992,8 +2720,8 @@ class _DecentImportFacts {
         : rrValues.length > 1
         ? 'The XML contains round robins. Round-robin positions can be preserved.'
         : hasTags
-        ? 'Tags are available as the main selection level for this preset.'
-        : 'This looks like a simple sample set.';
+        ? 'Tags are labels from the Decent file. Preview and select the material you want to bring into this folder.'
+        : 'Select the Decent groups to bring into this folder.';
 
     return _DecentImportFacts(
       presetCount: analysis.presets.length,
@@ -3012,7 +2740,6 @@ class _DecentImportFacts {
       velocityRangeCount: velocityRanges.length,
       controllerSummary: controllerSummary,
       interpretation: interpretation,
-      recommendation: recommendation,
     );
   }
 

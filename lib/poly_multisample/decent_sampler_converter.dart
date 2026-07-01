@@ -2321,10 +2321,9 @@ class DecentSamplerConverter {
       'or selected-group handling if this needs a different interpretation.',
     );
     decisions.add(
-      '$presetName: suggested choices for overlapping groups: use velocity '
-      'layers if these are dynamics, split to separate folders if these are '
-      'articulations/mics, or convert only the intended group if one group is '
-      'controlled by a macro/modwheel.',
+      '$presetName: overlapping groups need a manual import choice. Use '
+      'velocity layers only for real dynamics, round robins only for repeated '
+      'takes, or select the intended tag/group material explicitly.',
     );
   }
 

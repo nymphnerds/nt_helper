@@ -3,8 +3,8 @@
 ## Poly Multisample Builder Test Release Changelog
 
 Branch: `nymph-next-fix`
-Tag: `poly-multisample-builder-test-v8`
-Windows zip: `nt_helper-windows-poly-multisample-builder-test-v8.zip`
+Tag: `poly-multisample-builder-test-v9`
+Windows zip: `nt_helper-windows-poly-multisample-builder-test-v9.zip`
 
 This fork/branch contains an experimental Windows test build for a new Poly Multisample Builder in NT Helper.
 
@@ -22,19 +22,13 @@ This fork/branch contains an experimental Windows test build for a new Poly Mult
 - Improves auto-preview and keyboard-map focus after import without clamping the available MIDI range.
 - Adds regression coverage for tag XML summaries, mic/source-layer classification, preview-source paths, forced tag RR behaviour, and Decent RR/velocity interactions.
 
-### 2026-07-01 Dry/Baseline Tag Fix
+### 2026-07-01 Manual Decent Material Selection
 
-- Treats `Dry` as a preferred baseline/source tag instead of excluding it as an optional mic/source layer.
-- Classifies texture/source variants such as `Glitch`, `Jitter`, `Air`, and `Wave` as layer choices, so the default Decent tag selection can prefer the clean baseline where available.
-- Adds regression coverage for Dry plus texture-variant tag roles.
-
-### 2026-07-01 Structure-First Tag Defaults
-
-- Changes Decent tag checkbox defaults to use the XML-derived sample structure first.
-- Groups tags into Disting lanes using Low, Root, note range, velocity summary, and RR summary.
-- Includes tags from different non-colliding lanes by default.
-- When multiple tags share the same lane, treats them as alternatives and picks one default for that lane.
-- Uses names such as `Dry`, `Raw`, or `Clean` only as a tie-breaker inside structurally equivalent alternatives.
+- Decent tag/group choices now start unchecked.
+- Removes default-selected tag heuristics and suggestion wording from the Decent import dialog.
+- Keeps the useful Decent XML facts: sample counts, preview, Low/Root/Vel/RR defaults, velocity/RR summaries, and Decent-only control warnings.
+- Keeps `Select all` and `Clear`, but the user explicitly chooses which tags or groups enter the staged folder.
+- Keeps conservative tag role parsing for sorting/tooltips and tests, but it no longer decides what gets selected by default.
 
 ### 2026-06-29 Custom Import Mapping Polish
 
