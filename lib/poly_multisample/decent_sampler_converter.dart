@@ -112,6 +112,7 @@ class DecentSamplerGroupInfo {
     required this.xmlSummary,
     required this.sampleCount,
     required this.rootCount,
+    required this.structureSummary,
     required this.noteRange,
     required this.velocitySummary,
     required this.roundRobinSummary,
@@ -129,6 +130,7 @@ class DecentSamplerGroupInfo {
   final String xmlSummary;
   final int sampleCount;
   final int rootCount;
+  final String structureSummary;
   final String noteRange;
   final String velocitySummary;
   final String roundRobinSummary;
@@ -147,6 +149,7 @@ class DecentSamplerGroupInfo {
       xmlSummary: xmlSummary,
       sampleCount: sampleCount,
       rootCount: rootCount,
+      structureSummary: structureSummary,
       noteRange: noteRange,
       velocitySummary: velocitySummary,
       roundRobinSummary: roundRobinSummary,
@@ -167,6 +170,7 @@ class DecentSamplerGroupInfo {
       xmlSummary: xmlSummary,
       sampleCount: sampleCount,
       rootCount: rootCount,
+      structureSummary: structureSummary,
       noteRange: noteRange,
       velocitySummary: velocitySummary,
       roundRobinSummary: roundRobinSummary,
@@ -190,6 +194,7 @@ class DecentSamplerTag {
     required this.sampleCount,
     required this.confidence,
     required this.evidence,
+    required this.structureSummary,
     required this.noteRange,
     required this.velocitySummary,
     required this.roundRobinSummary,
@@ -208,6 +213,7 @@ class DecentSamplerTag {
   final int sampleCount;
   final double confidence;
   final String evidence;
+  final String structureSummary;
   final String noteRange;
   final String velocitySummary;
   final String roundRobinSummary;
@@ -227,6 +233,7 @@ class DecentSamplerTag {
       sampleCount: sampleCount,
       confidence: confidence,
       evidence: evidence,
+      structureSummary: structureSummary,
       noteRange: noteRange,
       velocitySummary: velocitySummary,
       roundRobinSummary: roundRobinSummary,
@@ -425,6 +432,7 @@ class DecentSamplerConverter {
           tag.defaultHighMidi,
         );
         builder.defaultVelocityLayer ??= tag.defaultVelocityLayer;
+        builder.structureSummary ??= tag.structureSummary;
         builder.noteRange ??= tag.noteRange;
         builder.velocitySummary ??= tag.velocitySummary;
         builder.roundRobinSummary ??= tag.roundRobinSummary;
@@ -749,6 +757,9 @@ class DecentSamplerConverter {
       ...explicitVelocityTagKeys,
       ...explicitRangeTagKeys,
     };
+    final materialTagKeys = explicitMappedTagKeys.isEmpty
+        ? explicitMappedTagKeys
+        : selectedTagKeys;
     final hasExplicitVelocityTags =
         (options.groupHandling == DecentSamplerGroupHandling.tagMapping ||
             options.groupHandling ==
@@ -768,7 +779,7 @@ class DecentSamplerConverter {
         ? _filterRegionsForSelectedTags(
             rawRegions,
             selectedTagKeys,
-            explicitMappedTagKeys,
+            materialTagKeys,
             options.groupHandling,
           )
         : rawRegions;
@@ -970,8 +981,8 @@ class DecentSamplerConverter {
         ? _forcedRoundRobins(rawRegions, options)
         : const <_DecentRawRegion, int>{};
     final forcedVelocityLayerCount =
-        tagVelocityLayers?.regionLayers.values.toSet().length ??
-        selectedGroupVelocityLayers?.regionLayers.values.toSet().length;
+        tagVelocityLayers?.tagLayers.values.toSet().length ??
+        selectedGroupVelocityLayers?.tagLayers.values.toSet().length;
     final groupVelocityLayers =
         !options.preserveXmlMapping &&
             tagVelocityLayers == null &&
@@ -1020,7 +1031,9 @@ class DecentSamplerConverter {
           'groups (${_groupLayerSummary(groupVelocityLayers)}).',
         );
       }
-    } else if (forcedRoundRobins.isEmpty) {
+    } else if (tagVelocityLayers == null &&
+        selectedGroupVelocityLayers == null &&
+        forcedRoundRobins.isEmpty) {
       _warnAboutAmbiguousGroupOverlaps(
         rawRegions,
         presetName,
@@ -1239,6 +1252,7 @@ class DecentSamplerConverter {
             loopEnd: loopEnd,
             groupName: group.name,
             groupIndex: group.index,
+            pitchKeyTrackDisabled: _isPitchKeyTrackDisabled(sample),
             tagKeys: tagKeys,
           ),
         );
@@ -1275,6 +1289,7 @@ class DecentSamplerConverter {
       xmlSummary: _groupXmlSummary(group),
       sampleCount: group.samples.length,
       rootCount: roots.length,
+      structureSummary: _structureSummaryForRegions(groupRegions),
       noteRange: _noteRangeForRegions(groupRegions),
       velocitySummary: _velocitySummaryForRegions(groupRegions),
       roundRobinSummary: _roundRobinSummaryForRegions(groupRegions),
@@ -1365,26 +1380,23 @@ class DecentSamplerConverter {
         );
       }
     }
-    return byKey.entries
-        .where((entry) => !_isThinCodedAxisTag(entry.value))
-        .map((entry) {
-          final tagRegions = rawRegions
-              .where((region) => region.tagKeys.contains(entry.key))
-              .toList();
-          final defaults = _defaultMappingForRegions(tagRegions);
-          return entry.value.toTag(
-            entry.key,
-            defaults,
-            noteRange: _noteRangeForRegions(tagRegions),
-            velocitySummary: _velocitySummaryForRegions(tagRegions),
-            roundRobinSummary: _roundRobinSummaryForRegions(tagRegions),
-            previewSourcePath: tagRegions.isEmpty
-                ? entry.value.previewSourcePath
-                : tagRegions.first.sourcePath,
-          );
-        })
-        .toList()
-      ..sort(_compareDecentTags);
+    return byKey.entries.map((entry) {
+      final tagRegions = rawRegions
+          .where((region) => region.tagKeys.contains(entry.key))
+          .toList();
+      final defaults = _defaultMappingForRegions(tagRegions);
+      return entry.value.toTag(
+        entry.key,
+        defaults,
+        noteRange: _noteRangeForRegions(tagRegions),
+        structureSummary: _structureSummaryForRegions(tagRegions),
+        velocitySummary: _velocitySummaryForRegions(tagRegions),
+        roundRobinSummary: _roundRobinSummaryForRegions(tagRegions),
+        previewSourcePath: tagRegions.isEmpty
+            ? entry.value.previewSourcePath
+            : tagRegions.first.sourcePath,
+      );
+    }).toList()..sort(_compareDecentTags);
   }
 
   static _DefaultDecentMapping _defaultMappingForRegions(
@@ -1475,6 +1487,79 @@ class DecentSamplerConverter {
         : 'RR ${rrValues.first}-${rrValues.last}';
   }
 
+  static String _structureSummaryForRegions(List<_DecentRawRegion> regions) {
+    if (regions.isEmpty) return 'No mapped samples';
+    final roots =
+        regions.map((region) => region.rootMidi).whereType<int>().toSet()
+          ..removeWhere((value) => value < 0 || value > 127);
+    final lows = regions
+        .map((region) => region.lowMidi ?? region.rootMidi)
+        .whereType<int>()
+        .where((value) => value >= 0 && value <= 127)
+        .toList();
+    final highs = regions
+        .map((region) => region.highMidi ?? region.rootMidi)
+        .whereType<int>()
+        .where((value) => value >= 0 && value <= 127)
+        .toList();
+    final notes = [...lows, ...highs]..sort();
+    final rangeText = notes.isEmpty
+        ? 'no note range'
+        : '${PolyMultisampleParser.midiToNoteName(notes.first)}-'
+              '${PolyMultisampleParser.midiToNoteName(notes.last)}';
+    final fixedPitch = regions.every((region) => region.pitchKeyTrackDisabled);
+    final pointMapped = regions.every((region) {
+      final root = region.rootMidi;
+      if (root == null) return false;
+      return (region.lowMidi ?? root) == root &&
+          (region.highMidi ?? root) == root;
+    });
+    final rootText = roots.length == 1
+        ? PolyMultisampleParser.midiToNoteName(roots.single)
+        : '${roots.length} roots';
+    final parts = <String>[];
+    if (regions.length == 1 && fixedPitch && notes.length >= 2) {
+      parts.add('1 fixed-pitch sample across $rangeText');
+    } else if (regions.length == 1 && roots.length == 1) {
+      parts.add('1 sample on $rootText');
+      if (!pointMapped && notes.length >= 2) parts.add('range $rangeText');
+    } else if (pointMapped && roots.length == regions.length) {
+      parts.add('${regions.length} pitched samples, one per key, $rangeText');
+    } else if (roots.length > 1) {
+      parts.add('${regions.length} samples over $rootText, $rangeText');
+    } else if (roots.length == 1) {
+      parts.add(
+        '${regions.length} sample${regions.length == 1 ? '' : 's'} on $rootText',
+      );
+      if (!pointMapped && notes.length >= 2) parts.add('range $rangeText');
+    } else {
+      parts.add(
+        '${regions.length} sample${regions.length == 1 ? '' : 's'}, $rangeText',
+      );
+    }
+
+    final velocityRanges = regions
+        .where((region) => region.hasExplicitVelocity)
+        .map((region) => '${region.velocityLow}-${region.velocityHigh}')
+        .toSet();
+    if (velocityRanges.isNotEmpty) {
+      parts.add(
+        '${velocityRanges.length} velocity range${velocityRanges.length == 1 ? '' : 's'}',
+      );
+    }
+    final rrValues = regions
+        .map((region) => region.seqPosition)
+        .whereType<int>()
+        .toSet();
+    if (rrValues.isNotEmpty) {
+      parts.add('${rrValues.length} RR slot${rrValues.length == 1 ? '' : 's'}');
+    }
+    if (fixedPitch && regions.length > 1) {
+      parts.add('fixed pitch');
+    }
+    return parts.join(' · ');
+  }
+
   static List<_SelectedTagPlan> _selectedTagPlans(
     List<_DecentSampleGroup> sampleGroups,
     List<_DecentRawRegion> rawRegions,
@@ -1528,10 +1613,6 @@ class DecentSamplerConverter {
   static Iterable<String> _groupTagLabelsForImport(
     _DecentSampleGroup group,
   ) sync* {
-    if (_isLikelyUnavailableDecentGroup(group.name) &&
-        group.samples.length <= 1) {
-      return;
-    }
     for (final label in _formalTagLabels(group.attributes)) {
       if (!_isHiddenTagLabel(label)) yield label;
     }
@@ -1558,6 +1639,11 @@ class DecentSamplerConverter {
         if (label.isNotEmpty && !_isHiddenTagLabel(label)) yield label;
       }
     }
+  }
+
+  static bool _isPitchKeyTrackDisabled(Map<String, String> attrs) {
+    final value = attrs['pitchkeytrack']?.trim().toLowerCase();
+    return value == '0' || value == 'false' || value == 'off';
   }
 
   static String _displayLabelForGroupTag(String label, String groupName) {
@@ -1610,199 +1696,21 @@ class DecentSamplerConverter {
 
   static bool _isUtilityTag(String label) {
     final key = _labelKey(label);
-    if (key.isEmpty || key == 'all' || key == 'main') return true;
-    if (RegExp(r'^\d+$').hasMatch(key)) return true;
-    if (RegExp(r'^channel_?\d+$').hasMatch(key)) return true;
-    if (key.endsWith('group')) return true;
-    if (key.startsWith('not') && key.length > 3) return true;
-    if (key.contains('selector') ||
-        key.contains('button') ||
-        key.contains('marker') ||
-        key.contains('control')) {
-      return true;
-    }
-    return false;
+    return key.isEmpty;
   }
 
   static bool _isHiddenTagLabel(String label) {
-    if (_isUtilityTag(label)) return true;
-    final key = label.trim().toLowerCase().replaceAll(RegExp(r'[\s-]+'), '_');
-    if (key.contains('placeholder') ||
-        key.contains('retired') ||
-        key.contains('locked')) {
-      return true;
-    }
-    final parts = key.split('_').where((part) => part.isNotEmpty).toList();
-    if (parts.length >= 3 && RegExp(r'^[a-z]\d+$').hasMatch(parts.first)) {
-      return true;
-    }
-    return false;
-  }
-
-  static bool _isLikelyUnavailableDecentGroup(String groupName) {
-    final key = groupName.toLowerCase();
-    return key.contains('placeholder') ||
-        key.contains('retired') ||
-        key.contains('locked');
-  }
-
-  static bool _isThinCodedAxisTag(_MutableDecentTag tag) {
-    final key = tag.label.trim().toLowerCase().split(RegExp(r'\s+')).first;
-    return RegExp(r'^[am]\d+$').hasMatch(key) && tag.maxGroupSampleCount <= 1;
+    return _isUtilityTag(label);
   }
 
   static DecentSamplerTagRole _roleForTag(String label) {
-    final key = _labelKey(label);
-    final tightKey = key.replaceAll(RegExp(r'[^a-z0-9]'), '');
-    if (_isDynamicLabel(label)) return DecentSamplerTagRole.dynamic;
-    if (RegExp(r'^(rr|roundrobin|robin|seq)\d*$').hasMatch(tightKey) ||
-        RegExp(r'(rr|roundrobin|seq)\d*$').hasMatch(tightKey)) {
-      return DecentSamplerTagRole.roundRobin;
-    }
-    const instrumentKeys = {
-      'piano',
-      'violin',
-      'viola',
-      'cello',
-      'bass',
-      'kick',
-      'kicks',
-      'bd',
-      'bassdrum',
-      'snare',
-      'snares',
-      'sd',
-      'hat',
-      'hats',
-      'hihat',
-      'closedhihat',
-      'openhihat',
-      'tom',
-      'toms',
-      'tomhi',
-      'tomlo',
-      'ride',
-      'crash',
-      'cymbal',
-      'cymbals',
-      'clap',
-      'claps',
-      'cowbell',
-      'perc',
-      'percussion',
-      'tamb',
-      'shaker',
-    };
-    if (instrumentKeys.contains(key) || instrumentKeys.contains(tightKey)) {
-      return DecentSamplerTagRole.instrument;
-    }
-    if (RegExp(
-      r'^(bd|timpani|tom|snare|sizzle|china|gong)\d*$',
-    ).hasMatch(tightKey)) {
-      return DecentSamplerTagRole.instrument;
-    }
-    const layerKeys = {
-      'close',
-      'room',
-      'hall',
-      'far',
-      'near',
-      'mic',
-      'mics',
-      'microphone',
-      'microphones',
-      'tape',
-      'tone',
-      'reverb',
-      'wet',
-      'dry',
-      'di',
-      'amp',
-      'mix',
-      'mono',
-      'stereo',
-      'contact',
-      'geofon',
-      'binaural',
-      'noise',
-      'noises',
-      'deadnote',
-      'deadnotes',
-      'release',
-      'releasetriggers',
-      'slideup',
-      'slidedown',
-      'slide',
-      'air',
-      'buzz',
-      'gloss',
-      'glitch',
-      'jitter',
-      'shimmer',
-      'clean',
-      'dirty',
-      'processed',
-      'wave',
-      'original',
-      'orig',
-      'natural',
-      'hyped',
-      'raw',
-      'direct',
-      'front',
-      'back',
-      'feet',
-      'cel',
-      'mel',
-      'tre',
-      'drysig',
-      'cvsig',
-      'ossig',
-      'tron',
-      'fx',
-      'organic',
-      'pad',
-      'scream',
-      'ex',
-    };
-    if (layerKeys.contains(key) || layerKeys.contains(tightKey)) {
-      return DecentSamplerTagRole.layer;
-    }
-    const articulationKeys = {
-      'sustain',
-      'sustains',
-      'staccato',
-      'spicc',
-      'spiccato',
-      'pizz',
-      'pizzicato',
-      'tremolo',
-      'legato',
-      'col',
-      'collegno',
-      'short',
-      'long',
-      'mute',
-      'muted',
-      'palm',
-      'as',
-      'd',
-      'w',
-      'hs',
-    };
-    if (RegExp(r'^(as|d|w|hs|col|spicc)\d*$').hasMatch(tightKey)) {
-      return DecentSamplerTagRole.articulation;
-    }
-    if (articulationKeys.contains(key) || articulationKeys.contains(tightKey)) {
-      return DecentSamplerTagRole.articulation;
-    }
     return DecentSamplerTagRole.group;
   }
 
   static String _tagKeyForLabel(String label) {
     final normalized = label.trim();
     if (normalized.isEmpty || _isHiddenTagLabel(normalized)) return '';
-    return '${_roleForTag(normalized).name}:${_labelKey(normalized)}';
+    return 'tag:${_labelKey(normalized)}';
   }
 
   static String _tagLabelFromKey(String key) {
@@ -1811,22 +1719,9 @@ class DecentSamplerConverter {
   }
 
   static int _compareDecentTags(DecentSamplerTag a, DecentSamplerTag b) {
-    final roleCompare = _tagRoleRank(a.role).compareTo(_tagRoleRank(b.role));
-    if (roleCompare != 0) return roleCompare;
     final countCompare = b.sampleCount.compareTo(a.sampleCount);
     if (countCompare != 0) return countCompare;
     return a.label.toLowerCase().compareTo(b.label.toLowerCase());
-  }
-
-  static int _tagRoleRank(DecentSamplerTagRole role) {
-    return switch (role) {
-      DecentSamplerTagRole.instrument => 0,
-      DecentSamplerTagRole.articulation => 1,
-      DecentSamplerTagRole.layer => 2,
-      DecentSamplerTagRole.dynamic => 3,
-      DecentSamplerTagRole.roundRobin => 4,
-      DecentSamplerTagRole.group => 5,
-    };
   }
 
   Map<String, int>? _dynamicGroupVelocityLayers(
@@ -1911,21 +1806,29 @@ class DecentSamplerConverter {
           entry.key: entry.value,
     };
     if (explicitLayers.isEmpty) return null;
-    final orderedTags = explicitLayers.isNotEmpty
-        ? (explicitLayers.keys.toList()..sort((a, b) {
-            final layerCompare = explicitLayers[a]!.compareTo(
-              explicitLayers[b]!,
+    final orderedTags =
+        <String>[
+          for (final key in selectedTagKeys)
+            if (rawRegions.any((region) => region.tagKeys.contains(key))) key,
+        ]..sort((a, b) {
+          final aExplicit = explicitLayers[a];
+          final bExplicit = explicitLayers[b];
+          if (aExplicit != null && bExplicit != null) {
+            final layerCompare = aExplicit.compareTo(bExplicit);
+            if (layerCompare != 0) return layerCompare;
+          } else if (aExplicit != null) {
+            final layerCompare = aExplicit.compareTo(
+              selectedTagKeys.indexOf(b) + 1,
             );
-            return layerCompare != 0
-                ? layerCompare
-                : selectedTagKeys
-                      .indexOf(a)
-                      .compareTo(selectedTagKeys.indexOf(b));
-          }))
-        : <String>[
-            for (final key in selectedTagKeys)
-              if (rawRegions.any((region) => region.tagKeys.contains(key))) key,
-          ];
+            if (layerCompare != 0) return layerCompare;
+          } else if (bExplicit != null) {
+            final layerCompare = selectedTagKeys.indexOf(a) + 1 - bExplicit;
+            if (layerCompare != 0) return layerCompare;
+          }
+          return selectedTagKeys
+              .indexOf(a)
+              .compareTo(selectedTagKeys.indexOf(b));
+        });
     final uniqueOrderedTags = <String>[];
     for (final key in orderedTags) {
       if (!uniqueOrderedTags.contains(key) &&
@@ -2071,16 +1974,44 @@ class DecentSamplerConverter {
           entry.key: entry.value,
     };
     if (explicitLayers.isEmpty) return null;
+    final orderedGroups =
+        <String>[
+          for (final key in options.selectedGroupKeys)
+            if (rawRegions.any((region) => _groupKey(region) == key)) key,
+        ]..sort((a, b) {
+          final aExplicit = explicitLayers[a];
+          final bExplicit = explicitLayers[b];
+          if (aExplicit != null && bExplicit != null) {
+            final layerCompare = aExplicit.compareTo(bExplicit);
+            if (layerCompare != 0) return layerCompare;
+          } else if (aExplicit != null) {
+            final layerCompare = aExplicit.compareTo(
+              options.selectedGroupKeys.indexOf(b) + 1,
+            );
+            if (layerCompare != 0) return layerCompare;
+          } else if (bExplicit != null) {
+            final layerCompare =
+                options.selectedGroupKeys.indexOf(a) + 1 - bExplicit;
+            if (layerCompare != 0) return layerCompare;
+          }
+          return options.selectedGroupKeys
+              .indexOf(a)
+              .compareTo(options.selectedGroupKeys.indexOf(b));
+        });
     final regionLayers = <_DecentRawRegion, int>{};
     for (final region in rawRegions) {
       final groupKey = _groupKey(region);
-      final layer = explicitLayers[groupKey];
-      if (layer == null) continue;
-      regionLayers[region] = layer;
+      final groupIndex = orderedGroups.indexOf(groupKey);
+      if (groupIndex < 0) continue;
+      regionLayers[region] = explicitLayers[groupKey] ?? groupIndex + 1;
     }
     if (regionLayers.isEmpty) return null;
     return _TagVelocityLayerPlan(
-      tagLayers: explicitLayers,
+      tagLayers: {
+        for (var index = 0; index < orderedGroups.length; index++)
+          orderedGroups[index]:
+              explicitLayers[orderedGroups[index]] ?? index + 1,
+      },
       regionLayers: regionLayers,
     );
   }
@@ -3348,6 +3279,7 @@ class _MutableDecentTag {
   int? defaultRootMidi;
   int? defaultHighMidi;
   int? defaultVelocityLayer;
+  String? structureSummary;
   String? noteRange;
   String? velocitySummary;
   String? roundRobinSummary;
@@ -3366,6 +3298,7 @@ class _MutableDecentTag {
   DecentSamplerTag toTag(
     String key,
     _DefaultDecentMapping defaults, {
+    String? structureSummary,
     String? noteRange,
     String? velocitySummary,
     String? roundRobinSummary,
@@ -3380,6 +3313,10 @@ class _MutableDecentTag {
       sampleCount: sampleCount,
       confidence: confidence,
       evidence: evidence,
+      structureSummary:
+          structureSummary ??
+          this.structureSummary ??
+          '$sampleCount sample${sampleCount == 1 ? '' : 's'}',
       noteRange: noteRange ?? this.noteRange ?? 'No notes',
       velocitySummary:
           velocitySummary ??
@@ -3481,6 +3418,7 @@ class _DecentRawRegion {
     required this.velocityLow,
     required this.velocityHigh,
     required this.hasExplicitVelocity,
+    required this.pitchKeyTrackDisabled,
     required this.seqPosition,
     required this.loopStart,
     required this.loopEnd,
@@ -3496,6 +3434,7 @@ class _DecentRawRegion {
   final int velocityLow;
   final int velocityHigh;
   final bool hasExplicitVelocity;
+  final bool pitchKeyTrackDisabled;
   final int? seqPosition;
   final int? loopStart;
   final int? loopEnd;

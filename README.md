@@ -8,6 +8,15 @@ Windows zip: `nt_helper-windows-poly-multisample-builder-test-v9.zip`
 
 This fork/branch contains an experimental Windows test build for a new Poly Multisample Builder in NT Helper.
 
+### 2026-07-01 Structural Decent Tag Logic
+
+- Decent tag/group rows now describe the actual sample structure found in the XML, not a guessed role from names like `Dry`, `Tape`, `raw`, `mic`, or `noise`.
+- Keeps every real tag/group visible when it points at samples; the user decides by previewing and selecting material.
+- Shows structure such as `1 fixed-pitch sample across G2-A2`, `3 pitched samples, one per key, G2-A2`, velocity-range counts, and RR slot counts.
+- Keeps `Keep Decent map` row controls editable while preventing impossible same-slot selections unless the user changes Low/Root/Vel/RR to make the rows distinct.
+- Removes fragile keyword-based tag selection/filtering from the Decent chooser; names are labels, structure is evidence.
+- Adds regression coverage for fixed-pitch bed tags, structure-based tag summaries, tag preview sources, tag velocity overrides, and RR-only tag mapping.
+
 ### 2026-07-01 Import Workflow Cleanup
 
 - Unifies the builder around one `Import` entry point that stages a single editable Disting NT Poly Multisample folder.
@@ -16,11 +25,11 @@ This fork/branch contains an experimental Windows test build for a new Poly Mult
 - Makes Decent Sampler sources always open the strategy/options screen after analysis, even when the XML looks simple.
 - Keeps Decent preset selection to one preset per staged folder, matching the one-folder Poly Multisample workflow.
 - Lets Decent imports choose Tags or Groups where useful, then choose `Keep Decent map`, `Chromatic`, `Velocity layers`, `Round robins`, or `Add unmapped`.
-- Shows Decent XML-derived tag/group mapping summaries in the rows and tooltips, including note range, velocity range, RR/seqPosition, and Decent-only layer/control warnings.
+- Shows Decent XML-derived tag/group mapping summaries in the rows and tooltips, including note range, velocity range, RR/seqPosition, fixed-pitch beds, and Decent-only layer/control warnings.
 - Adds preview buttons to Decent tag/group rows.
-- Keeps `Keep Decent map` honest: compatible XML Low/Root/Vel/RR/loop data is preserved, while row notes warn when Decent source/mic layers or switching/control behaviour cannot be reproduced directly on Disting.
+- Keeps `Keep Decent map` honest: compatible XML Low/Root/Vel/RR/loop data is preserved, while tooltips show where Decent layer/control behaviour cannot be reproduced directly on Disting.
 - Improves auto-preview and keyboard-map focus after import without clamping the available MIDI range.
-- Adds regression coverage for tag XML summaries, mic/source-layer classification, preview-source paths, forced tag RR behaviour, and Decent RR/velocity interactions.
+- Adds regression coverage for tag XML summaries, structure-based tag summaries, preview-source paths, forced tag RR behaviour, and Decent RR/velocity interactions.
 
 ### 2026-07-01 Manual Decent Material Selection
 
@@ -28,7 +37,7 @@ This fork/branch contains an experimental Windows test build for a new Poly Mult
 - Removes default-selected tag heuristics and suggestion wording from the Decent import dialog.
 - Keeps the useful Decent XML facts: sample counts, preview, Low/Root/Vel/RR defaults, velocity/RR summaries, and Decent-only control warnings.
 - Keeps `Select all` and `Clear`, but the user explicitly chooses which tags or groups enter the staged folder.
-- Keeps conservative tag role parsing for sorting/tooltips and tests, but it no longer decides what gets selected by default.
+- Removes the old role/keyword-driven tag chooser behaviour; tag names are labels, and sample structure is the evidence.
 
 ### 2026-06-29 Custom Import Mapping Polish
 

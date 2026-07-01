@@ -259,6 +259,48 @@ void main() {
       expect(mfTag.roundRobinSummary, 'No seqPosition');
     });
 
+    test('summarizes fixed-pitch bed tags from actual XML structure', () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'decent_converter_fixed_bed_tag_test_',
+      );
+      addTearDown(() async {
+        if (await tempDir.exists()) await tempDir.delete(recursive: true);
+      });
+
+      await _writeDummyWavs(tempDir, [
+        'Samples/tron_g2.wav',
+        'Samples/tron_gs2.wav',
+        'Samples/tron_a2.wav',
+        'Samples/tape.wav',
+      ]);
+
+      final preset = File('${tempDir.path}/DecenTron Cello.dspreset');
+      await preset.writeAsString('''
+<DecentSampler>
+  <groups>
+    <group tags="Tron">
+      <sample path="Samples/tron_g2.wav" rootNote="G2" loNote="G2" hiNote="G2"/>
+      <sample path="Samples/tron_gs2.wav" rootNote="G#2" loNote="G#2" hiNote="G#2"/>
+      <sample path="Samples/tron_a2.wav" rootNote="A2" loNote="A2" hiNote="A2"/>
+    </group>
+    <group tags="Tape" volume="2dB">
+      <sample path="Samples/tape.wav" rootNote="G2" loNote="G2" hiNote="A2" pitchKeyTrack="0"/>
+    </group>
+  </groups>
+</DecentSampler>
+''');
+
+      final analysis = await DecentSamplerConverter().analyze(
+        sourcePath: preset.path,
+      );
+      final summaries = {
+        for (final tag in analysis.tags) tag.label: tag.structureSummary,
+      };
+
+      expect(summaries['Tron'], '3 pitched samples, one per key, G2-A2');
+      expect(summaries['Tape'], '1 fixed-pitch sample across G2-A2');
+    });
+
     test('imports already extracted Decent Sampler folders', () async {
       final tempDir = await Directory.systemTemp.createTemp(
         'decent_converter_folder_test_',
@@ -481,24 +523,26 @@ void main() {
       );
     });
 
-    test('classifies dry and texture labels as layer variants', () async {
-      final tempDir = await Directory.systemTemp.createTemp(
-        'decent_converter_dry_layer_role_test_',
-      );
-      addTearDown(() async {
-        if (await tempDir.exists()) await tempDir.delete(recursive: true);
-      });
+    test(
+      'summarizes same-structure tags without depending on label names',
+      () async {
+        final tempDir = await Directory.systemTemp.createTemp(
+          'decent_converter_dry_layer_role_test_',
+        );
+        addTearDown(() async {
+          if (await tempDir.exists()) await tempDir.delete(recursive: true);
+        });
 
-      await _writeDummyWavs(tempDir, [
-        'Samples/dry.wav',
-        'Samples/glitch.wav',
-        'Samples/jitter.wav',
-        'Samples/air.wav',
-        'Samples/wave.wav',
-      ]);
+        await _writeDummyWavs(tempDir, [
+          'Samples/dry.wav',
+          'Samples/glitch.wav',
+          'Samples/jitter.wav',
+          'Samples/air.wav',
+          'Samples/wave.wav',
+        ]);
 
-      final preset = File('${tempDir.path}/D Mod.dspreset');
-      await preset.writeAsString('''
+        final preset = File('${tempDir.path}/D Mod.dspreset');
+        await preset.writeAsString('''
 <DecentSampler>
   <groups>
     <group name="Dry" tags="Dry">
@@ -520,17 +564,20 @@ void main() {
 </DecentSampler>
 ''');
 
-      final analysis = await DecentSamplerConverter().analyze(
-        sourcePath: preset.path,
-      );
-      final roles = {for (final tag in analysis.tags) tag.label: tag.role};
+        final analysis = await DecentSamplerConverter().analyze(
+          sourcePath: preset.path,
+        );
+        final summaries = {
+          for (final tag in analysis.tags) tag.label: tag.structureSummary,
+        };
 
-      expect(roles['Dry'], DecentSamplerTagRole.layer);
-      expect(roles['Glitch'], DecentSamplerTagRole.layer);
-      expect(roles['Jitter'], DecentSamplerTagRole.layer);
-      expect(roles['Air'], DecentSamplerTagRole.layer);
-      expect(roles['Wave'], DecentSamplerTagRole.layer);
-    });
+        expect(summaries['Dry'], '1 sample on C4');
+        expect(summaries['Glitch'], '1 sample on C4');
+        expect(summaries['Jitter'], '1 sample on C4');
+        expect(summaries['Air'], '1 sample on C4');
+        expect(summaries['Wave'], '1 sample on C4');
+      },
+    );
 
     test('summarizes repaired duplicate round robins as decisions', () async {
       final tempDir = await Directory.systemTemp.createTemp(
@@ -855,7 +902,66 @@ void main() {
       expect(result.warnings, isEmpty);
     });
 
-    test('classifies raw buzz gloss as source layer tags', () async {
+    test('single edited tag velocity keeps other selected tag layer', () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'decent_converter_partial_tag_velocity_test_',
+      );
+      addTearDown(() async {
+        if (await tempDir.exists()) await tempDir.delete(recursive: true);
+      });
+
+      await _writeDummyWavs(tempDir, [
+        'Samples/l1_c4.wav',
+        'Samples/l2_c4.wav',
+      ]);
+      final preset = File('${tempDir.path}/Partial Tag Velocity.dspreset');
+      await preset.writeAsString('''
+<DecentSampler>
+  <groups>
+    <group name="L1" tags="L1">
+      <sample path="Samples/l1_c4.wav" rootNote="C4"/>
+    </group>
+    <group name="L2" tags="L2">
+      <sample path="Samples/l2_c4.wav" rootNote="C4"/>
+    </group>
+  </groups>
+</DecentSampler>
+''');
+
+      final converter = DecentSamplerConverter();
+      final analysis = await converter.analyze(sourcePath: preset.path);
+      final tagKeys = {for (final tag in analysis.tags) tag.label: tag.key};
+
+      final result = await converter.convert(
+        sourcePath: preset.path,
+        outputParentPath: '${tempDir.path}/out',
+        options: DecentSamplerConvertOptions(
+          groupHandling: DecentSamplerGroupHandling.tagMapping,
+          selectedTagKeys: [tagKeys['L1']!, tagKeys['L2']!],
+          tagVelocityLayers: {tagKeys['L2']!: 2},
+          preserveXmlMapping: true,
+        ),
+      );
+
+      final outputFiles =
+          await Directory(result.outputFolders.single)
+                .list()
+                .where(
+                  (entity) => entity is File && entity.path.endsWith('.wav'),
+                )
+                .map((entity) => entity.uri.pathSegments.last)
+                .toList()
+            ..sort();
+
+      expect(outputFiles, [
+        'Partial_Tag_Velocity_C4_V1.wav',
+        'Partial_Tag_Velocity_C4_V2.wav',
+      ]);
+      expect(result.copiedFiles, 2);
+      expect(result.warnings, isEmpty);
+    });
+
+    test('previews raw buzz gloss without relying on label meaning', () async {
       final tempDir = await Directory.systemTemp.createTemp(
         'decent_converter_source_layer_tag_test_',
       );
@@ -888,15 +994,17 @@ void main() {
       final analysis = await DecentSamplerConverter().analyze(
         sourcePath: preset.path,
       );
-      final roles = {for (final tag in analysis.tags) tag.label: tag.role};
       final previews = {
         for (final tag in analysis.tags) tag.label: tag.previewSourcePath,
       };
+      final summaries = {
+        for (final tag in analysis.tags) tag.label: tag.structureSummary,
+      };
 
-      expect(roles['raw'], DecentSamplerTagRole.layer);
-      expect(roles['buzz'], DecentSamplerTagRole.layer);
-      expect(roles['gloss'], DecentSamplerTagRole.layer);
       expect(previews['raw'], 'Samples/raw_c4.wav');
+      expect(summaries['raw'], '1 sample on C4');
+      expect(summaries['buzz'], '1 sample on C4');
+      expect(summaries['gloss'], '1 sample on C4');
       expect(analysis.groups.first.previewSourcePath, 'Samples/raw_c4.wav');
     });
 
@@ -929,27 +1037,29 @@ void main() {
       final analysis = await DecentSamplerConverter().analyze(
         sourcePath: preset.path,
       );
-      final mic = analysis.tags.firstWhere((tag) => tag.key == 'layer:mic');
+      final mic = analysis.tags.firstWhere((tag) => tag.key == 'tag:mic');
 
-      expect(mic.role, DecentSamplerTagRole.layer);
       expect(mic.previewSourcePath, 'Samples/mic1_c4.wav');
+      expect(mic.structureSummary, '1 sample on C4');
     });
 
-    test('classifies noise and named RR fallback groups', () async {
-      final tempDir = await Directory.systemTemp.createTemp(
-        'decent_converter_noise_rr_fallback_test_',
-      );
-      addTearDown(() async {
-        if (await tempDir.exists()) await tempDir.delete(recursive: true);
-      });
+    test(
+      'summarizes noise and named RR fallback groups structurally',
+      () async {
+        final tempDir = await Directory.systemTemp.createTemp(
+          'decent_converter_noise_rr_fallback_test_',
+        );
+        addTearDown(() async {
+          if (await tempDir.exists()) await tempDir.delete(recursive: true);
+        });
 
-      await _writeDummyWavs(tempDir, [
-        'Samples/noise_91.wav',
-        'Samples/dead_32_rr1.wav',
-        'Samples/dead_32_rr2.wav',
-      ]);
-      final preset = File('${tempDir.path}/LoFi Nylon Shape.dspreset');
-      await preset.writeAsString('''
+        await _writeDummyWavs(tempDir, [
+          'Samples/noise_91.wav',
+          'Samples/dead_32_rr1.wav',
+          'Samples/dead_32_rr2.wav',
+        ]);
+        final preset = File('${tempDir.path}/LoFi Nylon Shape.dspreset');
+        await preset.writeAsString('''
 <DecentSampler>
   <groups>
     <group name="Noises">
@@ -965,15 +1075,18 @@ void main() {
 </DecentSampler>
 ''');
 
-      final analysis = await DecentSamplerConverter().analyze(
-        sourcePath: preset.path,
-      );
-      final roles = {for (final tag in analysis.tags) tag.label: tag.role};
+        final analysis = await DecentSamplerConverter().analyze(
+          sourcePath: preset.path,
+        );
+        final summaries = {
+          for (final tag in analysis.tags) tag.label: tag.structureSummary,
+        };
 
-      expect(roles['Noises'], DecentSamplerTagRole.layer);
-      expect(roles['DeadNotesRR1'], DecentSamplerTagRole.roundRobin);
-      expect(roles['DeadNotesRR2'], DecentSamplerTagRole.roundRobin);
-    });
+        expect(summaries['Noises'], '1 sample on G6');
+        expect(summaries['DeadNotesRR1'], '1 sample on G#1 · 1 RR slot');
+        expect(summaries['DeadNotesRR2'], '1 sample on G#1 · 1 RR slot');
+      },
+    );
   });
 }
 

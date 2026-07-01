@@ -32,13 +32,12 @@ fork branch   = nymph-next-fix
 fetched       = 2026-07-01
 ```
 
-Branch status before the v6 handoff commit:
+Branch status after the current upstream merge and Decent structural-tag pass:
 
-- `nymph-next-fix` has 17 commits not on `upstream/main`.
-- `upstream/main` has 5 newer commits not merged into this fork branch.
-- The current working tree has the v6 import cleanup work ready to commit.
+- `upstream/main` was fetched and merged into `nymph-next-fix` on 2026-07-01.
+- The current working tree has the structural Decent tag/import cleanup work ready to commit.
 
-Upstream-only commits currently not merged:
+Recent upstream commits merged into this fork include:
 
 ```text
 81d18f5d fix(video): hide Linux popup on close
@@ -62,7 +61,7 @@ Committed fork payload versus the fork point includes:
 - `docs/WINDOWS_FLUTTER_WORKFLOW.md`
 - README/pubspec/supporting builder integration changes
 
-Current v6 fork work on top of `nymph-next-fix`:
+Current fork work in this handoff:
 
 - `lib/poly_multisample/decent_sampler_converter.dart`
 - `lib/ui/poly_multisample/poly_multisample_builder_screen.dart`
@@ -141,9 +140,9 @@ Round robins mode must not export stale velocity overrides. If the original XML 
 Keep Decent map must be honest rather than magical. It should show what Decent said and also where Disting cannot behave the same way:
 
 - tag/group tooltips should expose XML note range, explicit velocity ranges, and RR/`seqPosition` summaries
-- row notes should say when XML velocity or RR is being kept
-- source/mic/layer tags should warn that they become fixed static material, not Decent-style switchable/mixable UI layers
-- articulation/switching-style tags should warn that Decent switching may not translate
+- row notes should describe the actual sample structure, not guessed names or roles
+- examples: `1 fixed-pitch sample across G2-A2`, `3 pitched samples, one per key, G2-A2`, `12 samples over 12 roots, C2-B2`, `2 velocity ranges`, `5 RR slots`
+- fixed-pitch beds such as tape/noise beds should stay visible when they point at real samples; they are not empty or junk just because the name looks like an effect/source label
 - the visible row controls are Disting override controls; they are not a full raw XML editor
 
 ## Decent Hierarchy
@@ -160,6 +159,8 @@ Tags are usually the musical choice. Groups remain available because some librar
 
 Decent tag/group choices should start unchecked. Do not auto-select material and do not show suggestions about what the user should choose. Decent libraries are too inconsistent for that to be reliable. The dialog should show facts and controls, then let the user preview and select the material explicitly.
 
+Tag names are labels, not truth. Do not make user-facing include/exclude decisions from keywords such as `Dry`, `Tape`, `raw`, `mic`, `room`, `noise`, `release`, or numbered codes. Base the row text and defaults on actual sample structure: root/low notes, velocity ranges, `seqPosition`, fixed-pitch tracking, and sample counts.
+
 Tag/group rows should show:
 
 - checkbox
@@ -168,9 +169,9 @@ Tag/group rows should show:
 - sample count
 - Disting mapping controls when applicable: `Low`, `Root`, `Vel`, `RR`
 
-Row text should describe XML/mapping facts only, such as `XML velocity kept`, `XML RR kept`, `source/mic layer is fixed`, or `Decent switching may not translate`. Tooltips can carry fuller XML evidence. Avoid `Included`, `Not included`, `Suggested`, or baseline-default wording.
+Row text should describe XML/mapping facts only. Tooltips can carry fuller XML evidence. Avoid `Included`, `Not included`, `Suggested`, or baseline-default wording.
 
-Tag role parsing can stay for sorting, tooltips, conservative junk filtering, and tests. It must not decide what is selected by default.
+Do not sort visible choices by guessed role. Current sorting is sample-count first, then label. That keeps substantial rows visible without pretending labels are comparable across libraries.
 
 ## XML Fidelity Rules
 
@@ -185,12 +186,13 @@ Be true to Decent XML where it is compatible with Disting:
 
 The analyzer now exposes XML mapping summaries on both groups and tags:
 
+- structural summary
 - note range
 - explicit velocity range summary
 - round robin / `seqPosition` summary
 - representative preview source path
 
-Do not invent velocity layers for mic positions, tape/tone variants, reverb, room/close, DI/amp, or arbitrary tags. Only explicit Velocity layers mode should force row velocity numbers.
+Do not invent velocity layers for mic positions, tape/tone variants, reverb, room/close, DI/amp, or arbitrary tags. Only explicit Velocity layers mode should force row velocity numbers. Keep Decent map may preserve real XML velocity ranges when they exist.
 
 Switching mapping modes should reset row overrides back to Decent/default values before applying the new quick mapping. This prevents stale values such as V1/V2/V3 remaining after switching to RR mode.
 
@@ -244,8 +246,10 @@ The focused Decent test file currently covers:
 - structural banks as velocity layers while preserving RR
 - pure RR groups staying RR
 - forced tag RR not adding velocity layer names
+- Keep Decent map showing/editing selected rows without importing only one colliding layer
 - tag XML mapping summaries for note range, velocity ranges, and RR/`seqPosition`
-- mic/source-layer tag classification
+- structure-based tag summaries that do not depend on label names
+- fixed-pitch bed tags from real XML (`pitchKeyTrack="0"`) staying visible
 - representative preview source paths for Decent tags/groups
 
 ## Verification Commands

@@ -639,7 +639,7 @@ class _EmptyBuilderView extends StatelessWidget {
             ),
             const SizedBox(height: 10),
             Text(
-              'Import stages files and folders first, then saves only when you choose Save.',
+              'Import stages files and folders first, then writes them to a Disting folder when you choose Save as.',
               style: theme.textTheme.bodySmall?.copyWith(
                 color: colorScheme.onSurfaceVariant,
               ),
@@ -925,7 +925,9 @@ class _DecentImportOptionsDialogState
                   onRangeChanged: _setTagKeyRange,
                   onRoundRobinChanged: _setTagRoundRobin,
                   onSelectAll: () => setState(() {
-                    _selectedTagKeys = {for (final tag in tags) tag.key};
+                    _selectedTagKeys = _selectableTagKeysForCurrentMapping(
+                      tags,
+                    );
                     _tagVelocityLayers = _defaultTagVelocityLayers(
                       _selectedTagKeys,
                     );
@@ -967,9 +969,9 @@ class _DecentImportOptionsDialogState
                   onRangeChanged: _setGroupKeyRange,
                   onRoundRobinChanged: _setGroupRoundRobin,
                   onSelectAll: () => setState(() {
-                    _selectedGroupKeys = {
-                      for (final group in groups) group.key,
-                    };
+                    _selectedGroupKeys = _selectableGroupKeysForCurrentMapping(
+                      groups,
+                    );
                     _groupVelocityLayers = _defaultGroupVelocityLayers(
                       _selectedGroupKeys,
                     );
@@ -1075,6 +1077,10 @@ class _DecentImportOptionsDialogState
         (_selectedGroupKeys.isEmpty || _hasInvalidGroupKeyRanges)) {
       return false;
     }
+    if (_decentQuickMapping == _DecentQuickMapping.keepXml &&
+        _hasKeepXmlSelectionCollision) {
+      return false;
+    }
     return true;
   }
 
@@ -1106,7 +1112,12 @@ class _DecentImportOptionsDialogState
     setState(() {
       final next = Set<String>.of(_selectedTagKeys);
       final removed = next.remove(key);
-      if (!removed) next.add(key);
+      if (!removed) {
+        if (_decentQuickMapping == _DecentQuickMapping.keepXml) {
+          _removeTagSlotAlternatives(next, key);
+        }
+        next.add(key);
+      }
       _selectedTagKeys = next;
       _syncTagVelocityLayers();
       _syncTagKeyRanges();
@@ -1121,7 +1132,12 @@ class _DecentImportOptionsDialogState
     setState(() {
       final next = Set<String>.of(_selectedGroupKeys);
       final removed = next.remove(key);
-      if (!removed) next.add(key);
+      if (!removed) {
+        if (_decentQuickMapping == _DecentQuickMapping.keepXml) {
+          _removeGroupSlotAlternatives(next, key);
+        }
+        next.add(key);
+      }
       _selectedGroupKeys = next;
       _syncGroupVelocityLayers();
       _syncGroupKeyRanges();
@@ -1252,6 +1268,7 @@ class _DecentImportOptionsDialogState
         tagKey: layer.clamp(1, 32).toInt(),
       };
       _editedTagVelocityKeys.add(tagKey);
+      _selectTagAfterMappingEdit(tagKey);
     });
   }
 
@@ -1262,6 +1279,7 @@ class _DecentImportOptionsDialogState
         groupKey: layer.clamp(1, 32).toInt(),
       };
       _editedGroupVelocityKeys.add(groupKey);
+      _selectGroupAfterMappingEdit(groupKey);
     });
   }
 
@@ -1272,6 +1290,7 @@ class _DecentImportOptionsDialogState
         tagKey: roundRobin.clamp(1, 32).toInt(),
       };
       _editedTagRoundRobinKeys.add(tagKey);
+      _selectTagAfterMappingEdit(tagKey);
     });
   }
 
@@ -1282,6 +1301,7 @@ class _DecentImportOptionsDialogState
         groupKey: roundRobin.clamp(1, 32).toInt(),
       };
       _editedGroupRoundRobinKeys.add(groupKey);
+      _selectGroupAfterMappingEdit(groupKey);
     });
   }
 
@@ -1289,6 +1309,9 @@ class _DecentImportOptionsDialogState
     setState(() {
       _decentQuickMapping = mode;
       _applyDecentQuickMappingToState();
+      if (mode == _DecentQuickMapping.keepXml) {
+        _pruneKeepXmlSelectionCollisions();
+      }
     });
   }
 
@@ -1392,6 +1415,190 @@ class _DecentImportOptionsDialogState
     }
   }
 
+  Set<String> _selectableTagKeysForCurrentMapping(List<DecentSamplerTag> tags) {
+    if (_decentQuickMapping != _DecentQuickMapping.keepXml) {
+      return {for (final tag in tags) tag.key};
+    }
+    final seenSlots = <String>{};
+    final keys = <String>{};
+    for (final tag in tags) {
+      if (!_selectedTagKeys.contains(tag.key)) continue;
+      if (seenSlots.add(_tagKeepXmlSlotKey(tag))) {
+        keys.add(tag.key);
+      }
+    }
+    for (final tag in tags) {
+      if (seenSlots.add(_tagKeepXmlSlotKey(tag))) {
+        keys.add(tag.key);
+      }
+    }
+    return keys;
+  }
+
+  Set<String> _selectableGroupKeysForCurrentMapping(
+    List<DecentSamplerGroupInfo> groups,
+  ) {
+    if (_decentQuickMapping != _DecentQuickMapping.keepXml) {
+      return {for (final group in groups) group.key};
+    }
+    final seenSlots = <String>{};
+    final keys = <String>{};
+    for (final group in groups) {
+      if (!_selectedGroupKeys.contains(group.key)) continue;
+      if (seenSlots.add(_groupKeepXmlSlotKey(group))) {
+        keys.add(group.key);
+      }
+    }
+    for (final group in groups) {
+      if (seenSlots.add(_groupKeepXmlSlotKey(group))) {
+        keys.add(group.key);
+      }
+    }
+    return keys;
+  }
+
+  void _removeTagSlotAlternatives(Set<String> selectedKeys, String newKey) {
+    final newTag = _tagForKey(newKey);
+    if (newTag == null) return;
+    final newSlot = _tagKeepXmlSlotKey(newTag);
+    for (final tag in _visibleTags) {
+      if (tag.key == newKey) continue;
+      if (_tagKeepXmlSlotKey(tag) == newSlot) {
+        selectedKeys.remove(tag.key);
+      }
+    }
+  }
+
+  void _removeGroupSlotAlternatives(Set<String> selectedKeys, String newKey) {
+    final newGroup = _groupForKey(newKey);
+    if (newGroup == null) return;
+    final newSlot = _groupKeepXmlSlotKey(newGroup);
+    for (final group in _visibleGroups) {
+      if (group.key == newKey) continue;
+      if (_groupKeepXmlSlotKey(group) == newSlot) {
+        selectedKeys.remove(group.key);
+      }
+    }
+  }
+
+  void _selectTagAfterMappingEdit(String tagKey) {
+    if (_tagForKey(tagKey) == null) return;
+    final next = Set<String>.of(_selectedTagKeys)..add(tagKey);
+    if (_decentQuickMapping == _DecentQuickMapping.keepXml) {
+      _removeTagSlotAlternatives(next, tagKey);
+    }
+    _selectedTagKeys = next;
+    _syncTagVelocityLayers();
+    _syncTagKeyRanges();
+    _syncTagRoundRobins();
+  }
+
+  void _selectGroupAfterMappingEdit(String groupKey) {
+    if (_groupForKey(groupKey) == null) return;
+    final next = Set<String>.of(_selectedGroupKeys)..add(groupKey);
+    if (_decentQuickMapping == _DecentQuickMapping.keepXml) {
+      _removeGroupSlotAlternatives(next, groupKey);
+    }
+    _selectedGroupKeys = next;
+    _syncGroupVelocityLayers();
+    _syncGroupKeyRanges();
+    _syncGroupRoundRobins();
+  }
+
+  DecentSamplerTag? _tagForKey(String key) {
+    for (final tag in _visibleTags) {
+      if (tag.key == key) return tag;
+    }
+    return null;
+  }
+
+  DecentSamplerGroupInfo? _groupForKey(String key) {
+    for (final group in _visibleGroups) {
+      if (group.key == key) return group;
+    }
+    return null;
+  }
+
+  void _pruneKeepXmlSelectionCollisions() {
+    if (_usingTags) {
+      _selectedTagKeys = _selectableTagKeysForCurrentMapping(
+        _visibleTags
+            .where((tag) => _selectedTagKeys.contains(tag.key))
+            .toList(),
+      );
+      _syncTagVelocityLayers();
+      _syncTagKeyRanges();
+      _syncTagRoundRobins();
+      return;
+    }
+    if (_usingGroups) {
+      _selectedGroupKeys = _selectableGroupKeysForCurrentMapping(
+        _visibleGroups
+            .where((group) => _selectedGroupKeys.contains(group.key))
+            .toList(),
+      );
+      _syncGroupVelocityLayers();
+      _syncGroupKeyRanges();
+      _syncGroupRoundRobins();
+    }
+  }
+
+  bool get _hasKeepXmlSelectionCollision {
+    if (_decentQuickMapping != _DecentQuickMapping.keepXml) return false;
+    if (_usingTags) {
+      final seenSlots = <String>{};
+      for (final tag in _visibleTags) {
+        if (!_selectedTagKeys.contains(tag.key)) continue;
+        if (!seenSlots.add(_tagKeepXmlSlotKey(tag))) return true;
+      }
+      return false;
+    }
+    if (_usingGroups) {
+      final seenSlots = <String>{};
+      for (final group in _visibleGroups) {
+        if (!_selectedGroupKeys.contains(group.key)) continue;
+        if (!seenSlots.add(_groupKeepXmlSlotKey(group))) return true;
+      }
+    }
+    return false;
+  }
+
+  String _tagKeepXmlSlotKey(DecentSamplerTag tag) {
+    final range =
+        _tagKeyRanges[tag.key] ??
+        DecentSamplerTagKeyRange(
+          lowMidi: tag.defaultLowMidi,
+          rootMidi: tag.defaultRootMidi,
+          highMidi: tag.defaultHighMidi,
+        );
+    return [
+      range.lowMidi.clamp(0, 127).toInt(),
+      range.rootMidi.clamp(0, 127).toInt(),
+      (_tagVelocityLayers[tag.key] ?? tag.defaultVelocityLayer)
+          .clamp(1, 32)
+          .toInt(),
+      (_tagRoundRobins[tag.key] ?? 1).clamp(1, 32).toInt(),
+    ].join(':');
+  }
+
+  String _groupKeepXmlSlotKey(DecentSamplerGroupInfo group) {
+    final range =
+        _groupKeyRanges[group.key] ??
+        DecentSamplerTagKeyRange(
+          lowMidi: group.defaultLowMidi,
+          rootMidi: group.defaultRootMidi,
+          highMidi: group.defaultHighMidi,
+        );
+    return [
+      range.lowMidi.clamp(0, 127).toInt(),
+      range.rootMidi.clamp(0, 127).toInt(),
+      (_groupVelocityLayers[group.key] ?? group.defaultVelocityLayer)
+          .clamp(1, 32)
+          .toInt(),
+      (_groupRoundRobins[group.key] ?? 1).clamp(1, 32).toInt(),
+    ].join(':');
+  }
+
   void _syncTagVelocityLayers() {
     final existing = Map<String, int>.of(_tagVelocityLayers);
     final next = <String, int>{};
@@ -1490,6 +1697,7 @@ class _DecentImportOptionsDialogState
         _editedTagRangeKeys.remove(tagKey);
       }
       _tagKeyRanges = next;
+      _selectTagAfterMappingEdit(tagKey);
     });
   }
 
@@ -1497,6 +1705,7 @@ class _DecentImportOptionsDialogState
     setState(() {
       _groupKeyRanges = {..._groupKeyRanges, groupKey: range};
       _editedGroupRangeKeys.add(groupKey);
+      _selectGroupAfterMappingEdit(groupKey);
     });
   }
 
@@ -2008,50 +2217,10 @@ class _TagSelectionPanel extends StatelessWidget {
     required _DecentQuickMapping mappingMode,
   }) {
     if (mappingMode == _DecentQuickMapping.unmapped) {
-      return 'Add unmapped';
+      return 'Add unmapped · ${tag.structureSummary}';
     }
-    if (mappingMode == _DecentQuickMapping.keepXml) {
-      return _tagKeepXmlNote(tag);
-    }
-    if (mappingMode == _DecentQuickMapping.chromatic) {
-      return 'Chromatic mapping';
-    }
-    if (mappingMode == _DecentQuickMapping.velocityLayers) {
-      return 'Velocity-layer mapping';
-    }
-    if (mappingMode == _DecentQuickMapping.roundRobins) {
-      return 'Round-robin mapping';
-    }
-    return 'Decent tag';
+    return tag.structureSummary;
   }
-
-  static String _tagKeepXmlNote(DecentSamplerTag tag) {
-    final notes = <String>[];
-    if (tag.velocitySummary != 'No explicit velocity ranges') {
-      notes.add('XML velocity kept');
-    }
-    if (tag.roundRobinSummary != 'No seqPosition') {
-      notes.add('XML RR kept');
-    }
-    if (tag.role == DecentSamplerTagRole.layer) {
-      notes.add('source/mic layer is fixed');
-    } else if (tag.role == DecentSamplerTagRole.articulation) {
-      notes.add('Decent switching may not translate');
-    }
-    if (notes.isEmpty) return 'XML map';
-    return notes.join(' · ');
-  }
-}
-
-String _tagShortRoleLabel(DecentSamplerTagRole role) {
-  return switch (role) {
-    DecentSamplerTagRole.instrument => 'instrument',
-    DecentSamplerTagRole.articulation => 'playing style',
-    DecentSamplerTagRole.layer => 'source/mic layer',
-    DecentSamplerTagRole.dynamic => 'loudness layer',
-    DecentSamplerTagRole.roundRobin => 'round robin',
-    DecentSamplerTagRole.group => 'Decent label',
-  };
 }
 
 class _GroupMappingPanel extends StatelessWidget {
@@ -2183,39 +2352,9 @@ class _GroupMappingPanel extends StatelessWidget {
     required _DecentQuickMapping mappingMode,
   }) {
     if (mappingMode == _DecentQuickMapping.unmapped) {
-      return 'Add unmapped';
+      return 'Add unmapped · ${group.structureSummary}';
     }
-    if (mappingMode == _DecentQuickMapping.chromatic) {
-      return 'Chromatic mapping';
-    }
-    if (mappingMode == _DecentQuickMapping.velocityLayers) {
-      return 'Velocity-layer mapping';
-    }
-    if (mappingMode == _DecentQuickMapping.roundRobins) {
-      return 'Round-robin mapping';
-    }
-
-    final notes = <String>[];
-    if (group.velocitySummary != 'No explicit velocity ranges') {
-      notes.add('XML velocity kept');
-    }
-    if (group.roundRobinSummary != 'No seqPosition') {
-      notes.add('XML RR kept');
-    }
-    if (_groupHasDecentOnlyControls(group)) {
-      notes.add('Decent controls may not translate');
-    }
-    if (notes.isEmpty) return 'XML map';
-    return notes.join(' · ');
-  }
-
-  static bool _groupHasDecentOnlyControls(DecentSamplerGroupInfo group) {
-    final summary = group.xmlSummary.toLowerCase();
-    return summary.contains('volume=') ||
-        summary.contains('pan=') ||
-        summary.contains('silencedbytags=') ||
-        summary.contains('silencingmode=') ||
-        summary.contains('tags=');
+    return group.structureSummary;
   }
 }
 
@@ -2328,7 +2467,11 @@ class _GroupMappingRow extends StatelessWidget {
                     const SizedBox(height: 2),
                     Tooltip(
                       message:
-                          '$note\nXML: ${group.noteRange}; ${group.velocitySummary}; ${group.roundRobinSummary}; ${group.xmlSummary}',
+                          '${group.structureSummary}\n'
+                          'XML notes: ${group.noteRange}\n'
+                          'XML velocity: ${group.velocitySummary}\n'
+                          'XML round robins: ${group.roundRobinSummary}\n'
+                          'XML group: ${group.xmlSummary}',
                       child: Text(
                         note,
                         maxLines: 1,
@@ -2359,17 +2502,13 @@ class _GroupMappingRow extends StatelessWidget {
                   child: _SampleNoteStepper(
                     label: 'Low',
                     value: normalized.lowMidi,
-                    onChanged: selected
-                        ? (value) => onRangeChanged(
-                            DecentSamplerTagKeyRange(
-                              lowMidi: value
-                                  .clamp(0, normalized.rootMidi)
-                                  .toInt(),
-                              rootMidi: normalized.rootMidi,
-                              highMidi: normalized.highMidi,
-                            ),
-                          )
-                        : null,
+                    onChanged: (value) => onRangeChanged(
+                      DecentSamplerTagKeyRange(
+                        lowMidi: value.clamp(0, normalized.rootMidi).toInt(),
+                        rootMidi: normalized.rootMidi,
+                        highMidi: normalized.highMidi,
+                      ),
+                    ),
                   ),
                 ),
                 const SizedBox(width: 6),
@@ -2380,20 +2519,15 @@ class _GroupMappingRow extends StatelessWidget {
                     value: normalized.rootMidi,
                     min: normalized.lowMidi,
                     max: normalized.highMidi,
-                    onChanged: selected
-                        ? (value) => onRangeChanged(
-                            DecentSamplerTagKeyRange(
-                              lowMidi: normalized.lowMidi,
-                              rootMidi: value
-                                  .clamp(
-                                    normalized.lowMidi,
-                                    normalized.highMidi,
-                                  )
-                                  .toInt(),
-                              highMidi: normalized.highMidi,
-                            ),
-                          )
-                        : null,
+                    onChanged: (value) => onRangeChanged(
+                      DecentSamplerTagKeyRange(
+                        lowMidi: normalized.lowMidi,
+                        rootMidi: value
+                            .clamp(normalized.lowMidi, normalized.highMidi)
+                            .toInt(),
+                        highMidi: normalized.highMidi,
+                      ),
+                    ),
                   ),
                 ),
                 const SizedBox(width: 6),
@@ -2404,7 +2538,7 @@ class _GroupMappingRow extends StatelessWidget {
                     value: velocityLayer.clamp(1, 32).toInt(),
                     min: 1,
                     max: 32,
-                    onChanged: selected ? onVelocityChanged : (_) {},
+                    onChanged: onVelocityChanged,
                   ),
                 ),
                 const SizedBox(width: 6),
@@ -2415,7 +2549,7 @@ class _GroupMappingRow extends StatelessWidget {
                     value: roundRobin.clamp(1, 32).toInt(),
                     min: 1,
                     max: 32,
-                    onChanged: selected ? onRoundRobinChanged : (_) {},
+                    onChanged: onRoundRobinChanged,
                   ),
                 ),
               ],
@@ -2513,12 +2647,14 @@ class _TagCheckboxRow extends StatelessWidget {
                     const SizedBox(height: 2),
                     Tooltip(
                       message:
-                          '$note\nXML summary: ${tag.noteRange}; '
-                          '${tag.velocitySummary}; ${tag.roundRobinSummary}\n'
+                          '${tag.structureSummary}\n'
+                          'XML notes: ${tag.noteRange}\n'
+                          'XML velocity: ${tag.velocitySummary}\n'
+                          'XML round robins: ${tag.roundRobinSummary}\n'
                           'Override row: Low ${PolyMultisampleParser.midiToNoteName(normalized.lowMidi)}, '
                           'Root ${PolyMultisampleParser.midiToNoteName(normalized.rootMidi)}, '
                           'Vel $velocityLayer, RR $roundRobin\n'
-                          'Evidence: ${tag.evidence}\nRole: ${_tagShortRoleLabel(tag.role)}',
+                          'Source label: ${tag.evidence}',
                       child: Text(
                         note,
                         maxLines: 1,
@@ -2549,17 +2685,13 @@ class _TagCheckboxRow extends StatelessWidget {
                   child: _SampleNoteStepper(
                     label: 'Low',
                     value: normalized.lowMidi,
-                    onChanged: selected
-                        ? (value) => onRangeChanged(
-                            DecentSamplerTagKeyRange(
-                              lowMidi: value
-                                  .clamp(0, normalized.rootMidi)
-                                  .toInt(),
-                              rootMidi: normalized.rootMidi,
-                              highMidi: normalized.highMidi,
-                            ),
-                          )
-                        : null,
+                    onChanged: (value) => onRangeChanged(
+                      DecentSamplerTagKeyRange(
+                        lowMidi: value.clamp(0, normalized.rootMidi).toInt(),
+                        rootMidi: normalized.rootMidi,
+                        highMidi: normalized.highMidi,
+                      ),
+                    ),
                   ),
                 ),
                 const SizedBox(width: 6),
@@ -2570,20 +2702,15 @@ class _TagCheckboxRow extends StatelessWidget {
                     value: normalized.rootMidi,
                     min: normalized.lowMidi,
                     max: normalized.highMidi,
-                    onChanged: selected
-                        ? (value) => onRangeChanged(
-                            DecentSamplerTagKeyRange(
-                              lowMidi: normalized.lowMidi,
-                              rootMidi: value
-                                  .clamp(
-                                    normalized.lowMidi,
-                                    normalized.highMidi,
-                                  )
-                                  .toInt(),
-                              highMidi: normalized.highMidi,
-                            ),
-                          )
-                        : null,
+                    onChanged: (value) => onRangeChanged(
+                      DecentSamplerTagKeyRange(
+                        lowMidi: normalized.lowMidi,
+                        rootMidi: value
+                            .clamp(normalized.lowMidi, normalized.highMidi)
+                            .toInt(),
+                        highMidi: normalized.highMidi,
+                      ),
+                    ),
                   ),
                 ),
                 const SizedBox(width: 6),
@@ -2594,7 +2721,7 @@ class _TagCheckboxRow extends StatelessWidget {
                     value: velocityLayer.clamp(1, 32).toInt(),
                     min: 1,
                     max: 32,
-                    onChanged: selected ? onVelocityChanged : (_) {},
+                    onChanged: onVelocityChanged,
                   ),
                 ),
                 const SizedBox(width: 6),
@@ -2605,7 +2732,7 @@ class _TagCheckboxRow extends StatelessWidget {
                     value: roundRobin.clamp(1, 32).toInt(),
                     min: 1,
                     max: 32,
-                    onChanged: selected ? onRoundRobinChanged : (_) {},
+                    onChanged: onRoundRobinChanged,
                   ),
                 ),
               ],
@@ -3223,15 +3350,12 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
     }
   }
 
-  Future<void> _saveCustomDraft({required bool saveAs}) async {
+  Future<void> _saveCustomDraft() async {
     if (!widget.isCustomDraft || _regions.isEmpty || _applying) return;
-    var outputPath = saveAs ? null : _lastCustomOutputFolder;
-    if (outputPath == null || !Directory(outputPath).existsSync()) {
-      outputPath = await FilePicker.getDirectoryPath(
-        dialogTitle: 'Choose custom Disting output folder',
-        initialDirectory: _existingDirectory(_lastCustomOutputFolder),
-      );
-    }
+    final outputPath = await FilePicker.getDirectoryPath(
+      dialogTitle: 'Choose Disting output folder',
+      initialDirectory: _existingDirectory(_lastCustomOutputFolder),
+    );
     if (outputPath == null) return;
 
     setState(() => _applying = true);
@@ -4057,7 +4181,10 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
                   ),
                 ),
                 const SizedBox(width: 12),
-                _DraftStatusChip(dirty: _hasDraftChanges),
+                _DraftStatusChip(
+                  dirty: _hasDraftChanges,
+                  importDraft: widget.isCustomDraft,
+                ),
                 const SizedBox(width: 8),
                 OutlinedButton.icon(
                   onPressed: _addCustomWavs,
@@ -4072,23 +4199,12 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
                 ),
                 const SizedBox(width: 8),
                 if (widget.isCustomDraft) ...[
-                  OutlinedButton.icon(
+                  FilledButton.icon(
                     onPressed: _regions.isEmpty || _applying
                         ? null
-                        : () => _saveCustomDraft(saveAs: true),
+                        : _saveCustomDraft,
                     icon: const Icon(Icons.save_as, size: 18),
-                    label: const Text('Save as'),
-                  ),
-                  const SizedBox(width: 8),
-                  FilledButton.icon(
-                    onPressed:
-                        _regions.isEmpty ||
-                            _applying ||
-                            _lastCustomOutputFolder == null
-                        ? null
-                        : () => _saveCustomDraft(saveAs: false),
-                    icon: const Icon(Icons.save, size: 18),
-                    label: Text(_applying ? 'Saving...' : 'Save'),
+                    label: Text(_applying ? 'Saving...' : 'Save as'),
                   ),
                   const SizedBox(width: 8),
                 ],
@@ -6116,28 +6232,34 @@ class _StatChip extends StatelessWidget {
 }
 
 class _DraftStatusChip extends StatelessWidget {
-  const _DraftStatusChip({required this.dirty});
+  const _DraftStatusChip({required this.dirty, required this.importDraft});
 
   final bool dirty;
+  final bool importDraft;
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final label = importDraft
+        ? 'Not saved'
+        : dirty
+        ? 'Unsaved draft'
+        : 'Draft only';
     return Container(
       height: 34,
       padding: const EdgeInsets.symmetric(horizontal: 10),
       alignment: Alignment.center,
       decoration: BoxDecoration(
-        color: dirty
+        color: dirty || importDraft
             ? colorScheme.tertiaryContainer.withValues(alpha: 0.55)
             : colorScheme.surfaceContainerHighest.withValues(alpha: 0.24),
         border: Border.all(color: colorScheme.outlineVariant),
         borderRadius: BorderRadius.circular(4),
       ),
       child: Text(
-        dirty ? 'Unsaved draft' : 'Draft only',
+        label,
         style: TextStyle(
-          color: dirty
+          color: dirty || importDraft
               ? colorScheme.onTertiaryContainer
               : colorScheme.onSurfaceVariant,
           fontSize: 12,
