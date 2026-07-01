@@ -15,12 +15,13 @@ This fork/branch contains an experimental Windows test build for a new Poly Mult
 - Merged developer `upstream/main` again at `55c4fdbc`, bringing in v2.42.2+280 plus Windows updater hardening and platform-asset release checks.
 - Merged developer `upstream/main` again at `30c5aef2`, bringing in v2.42.3+281 and the Windows CI VC++ runtime bundling update.
 - Merged developer `upstream/main` again at `0077f24b`, bringing in v2.42.5+283, the Windows Inno Setup installer workflow, and USB video capture threading hardening.
+- Merged developer `upstream/main` again at `95085858`, bringing in v2.42.7+285, the Windows installer VC++ redistributable prompt, and the updated CI packaging approach.
 - Current fork work now sits on top of those upstream syncs rather than an older developer-main baseline.
 
-### 2026-07-01 Current Windows Build
+### 2026-07-02 Current Windows Build
 
-- Confirmed `upstream/main` had no additional commits after the fifth sync.
-- Ran a fresh Windows release build from the Windows mirror after `flutter clean`.
+- Pulled and merged the latest developer `upstream/main` update before building.
+- Ran a fresh Windows release build from the Windows mirror.
 - Build output copied to `C:\Users\babyj\nt_helper-build\build\windows\x64\runner\Release`.
 - Fresh executable: `C:\Users\babyj\nt_helper-build\build\windows\x64\runner\Release\nt_helper.exe`.
 

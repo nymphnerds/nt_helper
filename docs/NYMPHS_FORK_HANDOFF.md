@@ -29,17 +29,18 @@ Comparison baseline:
 ```text
 upstream/main = thorinside/nt_helper main
 fork branch   = nymph-next-fix
-fetched       = 2026-07-01
+fetched       = 2026-07-02
 ```
 
-Branch status after the five upstream merges and Decent structural-tag pass:
+Branch status after the six upstream merges and Decent structural-tag pass:
 
 - First upstream sync: `28419624 Merge remote-tracking branch 'upstream/main' into nymph-next-fix`.
 - Second upstream sync: `02d08a66 Merge remote-tracking branch 'upstream/main' into nymph-next-fix`.
 - Third upstream sync: `55c4fdbc Merge remote-tracking branch 'upstream/main' into nymph-next-fix`.
 - Fourth upstream sync: `30c5aef2 Merge remote-tracking branch 'upstream/main' into nymph-next-fix`.
 - Fifth upstream sync: `0077f24b Merge remote-tracking branch 'upstream/main' into nymph-next-fix`.
-- Current fork work sits on top of all five syncs and includes the structural Decent tag/import cleanup.
+- Sixth upstream sync: `95085858 Merge remote-tracking branch 'upstream/main' into nymph-next-fix`.
+- Current fork work sits on top of all six syncs and includes the structural Decent tag/import cleanup.
 
 First upstream sync brought in:
 
@@ -88,6 +89,15 @@ Fifth upstream sync brought in:
 fed33a75 fix(windows): harden USB video capture threading
 fc2dea2d Bump version to 2.42.4+282
 c88dcca8 feat(windows): publish Inno Setup installer
+```
+
+Sixth upstream sync brought in:
+
+```text
+6e102922 Bump version to 2.42.7+285
+5073ac98 build(windows): offer VC++ redist when missing
+7f3c0967 Bump version to 2.42.6+284
+94ec542e ci(windows): stop bundling VC++ runtime DLLs
 ```
 
 Committed fork payload versus the fork point includes:
