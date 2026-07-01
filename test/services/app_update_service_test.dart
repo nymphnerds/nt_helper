@@ -1,4 +1,6 @@
 import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:mocktail/mocktail.dart';
@@ -135,6 +137,79 @@ void main() {
       expect(result!.version, '3.0.0');
     });
 
+    test('returns null when update lacks current platform asset', () async {
+      final windowsService = AppUpdateService(
+        httpClient: mockClient,
+        currentVersion: '2.0.0',
+        platformKey: 'windows',
+      );
+      final releaseWithoutWindows = Map<String, dynamic>.from(_sampleRelease);
+      releaseWithoutWindows['assets'] = [
+        {
+          'name': 'nt_helper-3.0.0-macos.zip',
+          'browser_download_url':
+              'https://github.com/thorinside/nt_helper/releases/download/v3.0.0/nt_helper-3.0.0-macos.zip',
+        },
+        {
+          'name': 'nt_helper-3.0.0-linux.zip',
+          'browser_download_url':
+              'https://github.com/thorinside/nt_helper/releases/download/v3.0.0/nt_helper-3.0.0-linux.zip',
+        },
+      ];
+
+      when(
+        () => mockClient.get(any(), headers: any(named: 'headers')),
+      ).thenAnswer(
+        (_) async => http.Response(jsonEncode(releaseWithoutWindows), 200),
+      );
+
+      final result = await windowsService.checkForUpdate();
+      expect(result, isNull);
+    });
+
+    test('returns release when update has current platform asset', () async {
+      final linuxService = AppUpdateService(
+        httpClient: mockClient,
+        currentVersion: '2.0.0',
+        platformKey: 'linux',
+      );
+
+      when(
+        () => mockClient.get(any(), headers: any(named: 'headers')),
+      ).thenAnswer((_) async => http.Response(jsonEncode(_sampleRelease), 200));
+
+      final result = await linuxService.checkForUpdate();
+      expect(result, isNotNull);
+      expect(result!.platformAssets, contains('linux'));
+    });
+
+    test('skipVersionCheck still requires current platform asset', () async {
+      final windowsService = AppUpdateService(
+        httpClient: mockClient,
+        currentVersion: '3.0.0',
+        platformKey: 'windows',
+      );
+      final releaseWithoutWindows = Map<String, dynamic>.from(_sampleRelease);
+      releaseWithoutWindows['assets'] = [
+        {
+          'name': 'nt_helper-3.0.0-macos.zip',
+          'browser_download_url':
+              'https://github.com/thorinside/nt_helper/releases/download/v3.0.0/nt_helper-3.0.0-macos.zip',
+        },
+      ];
+
+      when(
+        () => mockClient.get(any(), headers: any(named: 'headers')),
+      ).thenAnswer(
+        (_) async => http.Response(jsonEncode(releaseWithoutWindows), 200),
+      );
+
+      final result = await windowsService.checkForUpdate(
+        skipVersionCheck: true,
+      );
+      expect(result, isNull);
+    });
+
     test('returns null when already up to date', () async {
       final upToDateService = AppUpdateService(
         httpClient: mockClient,
@@ -175,6 +250,66 @@ void main() {
       verify(
         () => mockClient.get(any(), headers: any(named: 'headers')),
       ).called(2);
+    });
+
+    test('findWindowsReleaseRoot finds executable at archive root', () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'nt-helper-update-test-',
+      );
+      addTearDown(() => tempDir.delete(recursive: true));
+      await File('${tempDir.path}/nt_helper.exe').writeAsString('exe');
+
+      final releaseRoot = await AppUpdateService.findWindowsReleaseRoot(
+        tempDir,
+      );
+
+      expect(releaseRoot?.path, tempDir.path);
+    });
+
+    test('findWindowsReleaseRoot finds executable in nested archive', () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'nt-helper-update-test-',
+      );
+      addTearDown(() => tempDir.delete(recursive: true));
+      final nestedDir = Directory('${tempDir.path}/Release');
+      await nestedDir.create();
+      await File('${nestedDir.path}/nt_helper.exe').writeAsString('exe');
+
+      final releaseRoot = await AppUpdateService.findWindowsReleaseRoot(
+        tempDir,
+      );
+
+      expect(releaseRoot?.path, nestedDir.path);
+    });
+
+    test('buildWindowsUpdateScript logs, unblocks, and relaunches', () {
+      final script = AppUpdateService.buildWindowsUpdateScript(
+        sourceDir: r'C:\Temp\update',
+        appDir: r'C:\Program Files\NT Helper',
+        exePath: r'C:\Program Files\NT Helper\nt_helper.exe',
+        logPath: r'C:\Users\neal\AppData\Roaming\nt_helper_update.log',
+        currentPid: 1234,
+      );
+
+      expect(script, contains(r'Wait-Process -Id $currentPid -Timeout 30'));
+      expect(script, contains('Copy-Item -LiteralPath'));
+      expect(script, contains('Unblock-File -ErrorAction SilentlyContinue'));
+      expect(script, contains(r'Start-Process -FilePath $exePath'));
+      expect(script, contains('Write-UpdateLog'));
+      expect(script, contains(r"$appDir = 'C:\Program Files\NT Helper'"));
+    });
+
+    test('buildWindowsUpdateScript escapes single quotes in paths', () {
+      final script = AppUpdateService.buildWindowsUpdateScript(
+        sourceDir: r"C:\Users\Neal's PC\update",
+        appDir: r"C:\Users\Neal's PC\NT Helper",
+        exePath: r"C:\Users\Neal's PC\NT Helper\nt_helper.exe",
+        logPath: r"C:\Users\Neal's PC\update.log",
+        currentPid: 1234,
+      );
+
+      expect(script, contains(r"$sourceDir = 'C:\Users\Neal''s PC\update'"));
+      expect(script, contains(r"$appDir = 'C:\Users\Neal''s PC\NT Helper'"));
     });
   });
 }
