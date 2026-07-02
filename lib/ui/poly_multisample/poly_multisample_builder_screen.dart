@@ -746,6 +746,7 @@ class _DecentImportOptionsDialogState
   int _decentMapRootMidi = 36;
   int _decentMapVelocityLayer = 1;
   bool _includeSourceDocs = true;
+  bool _manualDecentRowEdits = false;
   final AudioPlayer _previewPlayer = AudioPlayer();
   final Map<_DecentWavCandidate, File> _previewFiles = {};
   StreamSubscription<void>? _previewCompleteSubscription;
@@ -919,15 +920,20 @@ class _DecentImportOptionsDialogState
                   mappingMode: _decentQuickMapping,
                   previewingKey: _previewingChoiceKey,
                   previewBusy: _previewBusy,
+                  manualEdits: _manualDecentRowEdits,
+                  conflictMessage: _manualDecentRowEdits
+                      ? _selectedMappingConflictMessage
+                      : null,
+                  onToggleEditMode: _toggleDecentRowEditMode,
                   onToggle: _toggleTag,
                   onPreview: _toggleTagPreview,
                   onVelocityChanged: _setTagVelocityLayer,
                   onRangeChanged: _setTagKeyRange,
                   onRoundRobinChanged: _setTagRoundRobin,
                   onSelectAll: () => setState(() {
-                    _selectedTagKeys = _selectableTagKeysForCurrentMapping(
-                      tags,
-                    );
+                    _selectedTagKeys = _manualDecentRowEdits
+                        ? {for (final tag in tags) tag.key}
+                        : _selectableTagKeysForCurrentMapping(tags);
                     _tagVelocityLayers = _defaultTagVelocityLayers(
                       _selectedTagKeys,
                     );
@@ -963,15 +969,20 @@ class _DecentImportOptionsDialogState
                   mappingMode: _decentQuickMapping,
                   previewingKey: _previewingChoiceKey,
                   previewBusy: _previewBusy,
+                  manualEdits: _manualDecentRowEdits,
+                  conflictMessage: _manualDecentRowEdits
+                      ? _selectedMappingConflictMessage
+                      : null,
+                  onToggleEditMode: _toggleDecentRowEditMode,
                   onToggle: _toggleGroup,
                   onPreview: _toggleGroupPreview,
                   onVelocityChanged: _setGroupVelocityLayer,
                   onRangeChanged: _setGroupKeyRange,
                   onRoundRobinChanged: _setGroupRoundRobin,
                   onSelectAll: () => setState(() {
-                    _selectedGroupKeys = _selectableGroupKeysForCurrentMapping(
-                      groups,
-                    );
+                    _selectedGroupKeys = _manualDecentRowEdits
+                        ? {for (final group in groups) group.key}
+                        : _selectableGroupKeysForCurrentMapping(groups);
                     _groupVelocityLayers = _defaultGroupVelocityLayers(
                       _selectedGroupKeys,
                     );
@@ -1078,10 +1089,24 @@ class _DecentImportOptionsDialogState
       return false;
     }
     if (_decentQuickMapping == _DecentQuickMapping.keepXml &&
+        !_manualDecentRowEdits &&
         _hasKeepXmlSelectionCollision) {
       return false;
     }
+    if (_manualDecentRowEdits && _selectedMappingConflictMessage != null) {
+      return false;
+    }
     return true;
+  }
+
+  void _toggleDecentRowEditMode() {
+    setState(() {
+      _manualDecentRowEdits = !_manualDecentRowEdits;
+      if (!_manualDecentRowEdits &&
+          _decentQuickMapping == _DecentQuickMapping.keepXml) {
+        _pruneKeepXmlSelectionCollisions();
+      }
+    });
   }
 
   void _selectPreset(String name) {
@@ -1113,7 +1138,8 @@ class _DecentImportOptionsDialogState
       final next = Set<String>.of(_selectedTagKeys);
       final removed = next.remove(key);
       if (!removed) {
-        if (_decentQuickMapping == _DecentQuickMapping.keepXml) {
+        if (!_manualDecentRowEdits &&
+            _decentQuickMapping == _DecentQuickMapping.keepXml) {
           _removeTagSlotAlternatives(next, key);
         }
         next.add(key);
@@ -1133,7 +1159,8 @@ class _DecentImportOptionsDialogState
       final next = Set<String>.of(_selectedGroupKeys);
       final removed = next.remove(key);
       if (!removed) {
-        if (_decentQuickMapping == _DecentQuickMapping.keepXml) {
+        if (!_manualDecentRowEdits &&
+            _decentQuickMapping == _DecentQuickMapping.keepXml) {
           _removeGroupSlotAlternatives(next, key);
         }
         next.add(key);
@@ -1309,7 +1336,7 @@ class _DecentImportOptionsDialogState
     setState(() {
       _decentQuickMapping = mode;
       _applyDecentQuickMappingToState();
-      if (mode == _DecentQuickMapping.keepXml) {
+      if (!_manualDecentRowEdits && mode == _DecentQuickMapping.keepXml) {
         _pruneKeepXmlSelectionCollisions();
       }
     });
@@ -1484,7 +1511,8 @@ class _DecentImportOptionsDialogState
   void _selectTagAfterMappingEdit(String tagKey) {
     if (_tagForKey(tagKey) == null) return;
     final next = Set<String>.of(_selectedTagKeys)..add(tagKey);
-    if (_decentQuickMapping == _DecentQuickMapping.keepXml) {
+    if (!_manualDecentRowEdits &&
+        _decentQuickMapping == _DecentQuickMapping.keepXml) {
       _removeTagSlotAlternatives(next, tagKey);
     }
     _selectedTagKeys = next;
@@ -1496,7 +1524,8 @@ class _DecentImportOptionsDialogState
   void _selectGroupAfterMappingEdit(String groupKey) {
     if (_groupForKey(groupKey) == null) return;
     final next = Set<String>.of(_selectedGroupKeys)..add(groupKey);
-    if (_decentQuickMapping == _DecentQuickMapping.keepXml) {
+    if (!_manualDecentRowEdits &&
+        _decentQuickMapping == _DecentQuickMapping.keepXml) {
       _removeGroupSlotAlternatives(next, groupKey);
     }
     _selectedGroupKeys = next;
@@ -1561,6 +1590,126 @@ class _DecentImportOptionsDialogState
       }
     }
     return false;
+  }
+
+  String? get _selectedMappingConflictMessage {
+    if (!_mappingShowsControls) return null;
+    if (_usingTags) {
+      final seen = <String, DecentSamplerTag>{};
+      for (final tag in _visibleTags) {
+        if (!_selectedTagKeys.contains(tag.key)) continue;
+        final range =
+            _tagKeyRanges[tag.key] ??
+            DecentSamplerTagKeyRange(
+              lowMidi: tag.defaultLowMidi,
+              rootMidi: tag.defaultRootMidi,
+              highMidi: tag.defaultHighMidi,
+            );
+        final velocity =
+            (_tagVelocityLayers[tag.key] ?? tag.defaultVelocityLayer)
+                .clamp(1, 32)
+                .toInt();
+        final roundRobin = (_tagRoundRobins[tag.key] ?? 1).clamp(1, 32).toInt();
+        for (final entry in seen.entries) {
+          final other = entry.value;
+          final otherRange =
+              _tagKeyRanges[other.key] ??
+              DecentSamplerTagKeyRange(
+                lowMidi: other.defaultLowMidi,
+                rootMidi: other.defaultRootMidi,
+                highMidi: other.defaultHighMidi,
+              );
+          final otherVelocity =
+              (_tagVelocityLayers[other.key] ?? other.defaultVelocityLayer)
+                  .clamp(1, 32)
+                  .toInt();
+          final otherRoundRobin = (_tagRoundRobins[other.key] ?? 1)
+              .clamp(1, 32)
+              .toInt();
+          if (velocity == otherVelocity &&
+              roundRobin == otherRoundRobin &&
+              _midiRangesOverlap(range, otherRange)) {
+            return _mappingConflictText(
+              other.label,
+              tag.label,
+              velocity,
+              roundRobin,
+            );
+          }
+        }
+        seen[tag.key] = tag;
+      }
+      return null;
+    }
+    if (_usingGroups) {
+      final seen = <String, DecentSamplerGroupInfo>{};
+      for (final group in _visibleGroups) {
+        if (!_selectedGroupKeys.contains(group.key)) continue;
+        final range =
+            _groupKeyRanges[group.key] ??
+            DecentSamplerTagKeyRange(
+              lowMidi: group.defaultLowMidi,
+              rootMidi: group.defaultRootMidi,
+              highMidi: group.defaultHighMidi,
+            );
+        final velocity =
+            (_groupVelocityLayers[group.key] ?? group.defaultVelocityLayer)
+                .clamp(1, 32)
+                .toInt();
+        final roundRobin = (_groupRoundRobins[group.key] ?? 1)
+            .clamp(1, 32)
+            .toInt();
+        for (final entry in seen.entries) {
+          final other = entry.value;
+          final otherRange =
+              _groupKeyRanges[other.key] ??
+              DecentSamplerTagKeyRange(
+                lowMidi: other.defaultLowMidi,
+                rootMidi: other.defaultRootMidi,
+                highMidi: other.defaultHighMidi,
+              );
+          final otherVelocity =
+              (_groupVelocityLayers[other.key] ?? other.defaultVelocityLayer)
+                  .clamp(1, 32)
+                  .toInt();
+          final otherRoundRobin = (_groupRoundRobins[other.key] ?? 1)
+              .clamp(1, 32)
+              .toInt();
+          if (velocity == otherVelocity &&
+              roundRobin == otherRoundRobin &&
+              _midiRangesOverlap(range, otherRange)) {
+            return _mappingConflictText(
+              other.name,
+              group.name,
+              velocity,
+              roundRobin,
+            );
+          }
+        }
+        seen[group.key] = group;
+      }
+    }
+    return null;
+  }
+
+  bool _midiRangesOverlap(
+    DecentSamplerTagKeyRange first,
+    DecentSamplerTagKeyRange second,
+  ) {
+    final firstLow = first.lowMidi.clamp(0, 127).toInt();
+    final firstHigh = first.highMidi.clamp(firstLow, 127).toInt();
+    final secondLow = second.lowMidi.clamp(0, 127).toInt();
+    final secondHigh = second.highMidi.clamp(secondLow, 127).toInt();
+    return firstLow <= secondHigh && secondLow <= firstHigh;
+  }
+
+  String _mappingConflictText(
+    String firstLabel,
+    String secondLabel,
+    int velocity,
+    int roundRobin,
+  ) {
+    return '$firstLabel and $secondLabel overlap on Vel $velocity / RR $roundRobin. Move one row to another Vel, RR, or note range before continuing.';
   }
 
   String _tagKeepXmlSlotKey(DecentSamplerTag tag) {
@@ -2090,6 +2239,25 @@ class _DecentQuickMappingPanel extends StatelessWidget {
   }
 }
 
+class _DecentRowEditModeButton extends StatelessWidget {
+  const _DecentRowEditModeButton({
+    required this.manualEdits,
+    required this.onPressed,
+  });
+
+  final bool manualEdits;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return OutlinedButton.icon(
+      onPressed: onPressed,
+      icon: Icon(manualEdits ? Icons.edit_note : Icons.auto_fix_high, size: 18),
+      label: Text(manualEdits ? 'Manual edits' : 'Smart edits'),
+    );
+  }
+}
+
 class _TagSelectionPanel extends StatelessWidget {
   const _TagSelectionPanel({
     required this.tags,
@@ -2104,6 +2272,9 @@ class _TagSelectionPanel extends StatelessWidget {
     required this.mappingMode,
     required this.previewingKey,
     required this.previewBusy,
+    required this.manualEdits,
+    required this.conflictMessage,
+    required this.onToggleEditMode,
     required this.onToggle,
     required this.onPreview,
     required this.onVelocityChanged,
@@ -2125,6 +2296,9 @@ class _TagSelectionPanel extends StatelessWidget {
   final _DecentQuickMapping mappingMode;
   final String? previewingKey;
   final bool previewBusy;
+  final bool manualEdits;
+  final String? conflictMessage;
+  final VoidCallback onToggleEditMode;
   final ValueChanged<String> onToggle;
   final ValueChanged<DecentSamplerTag> onPreview;
   final void Function(String tagKey, int layer) onVelocityChanged;
@@ -2154,17 +2328,33 @@ class _TagSelectionPanel extends StatelessWidget {
               ),
             ),
             const Spacer(),
+            _DecentRowEditModeButton(
+              manualEdits: manualEdits,
+              onPressed: onToggleEditMode,
+            ),
+            const SizedBox(width: 8),
             TextButton(onPressed: onSelectAll, child: const Text('Select all')),
             TextButton(onPressed: onClear, child: const Text('Clear')),
           ],
         ),
         const SizedBox(height: 6),
         Text(
-          'Tags are labels from the Decent file. Preview rows, select the material you want, then edit Low, Root, Vel, or RR if needed.',
+          manualEdits
+              ? 'Manual edits leave rows where you put them. Fix any overlap before continuing.'
+              : 'Smart edits keep the Disting map valid as you select and edit rows.',
           style: theme.textTheme.bodySmall?.copyWith(
             color: theme.colorScheme.onSurfaceVariant,
           ),
         ),
+        if (conflictMessage != null) ...[
+          const SizedBox(height: 4),
+          Text(
+            conflictMessage!,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.error,
+            ),
+          ),
+        ],
         const SizedBox(height: 6),
         DecoratedBox(
           decoration: BoxDecoration(
@@ -2237,6 +2427,9 @@ class _GroupMappingPanel extends StatelessWidget {
     required this.mappingMode,
     required this.previewingKey,
     required this.previewBusy,
+    required this.manualEdits,
+    required this.conflictMessage,
+    required this.onToggleEditMode,
     required this.onToggle,
     required this.onPreview,
     required this.onVelocityChanged,
@@ -2258,6 +2451,9 @@ class _GroupMappingPanel extends StatelessWidget {
   final _DecentQuickMapping mappingMode;
   final String? previewingKey;
   final bool previewBusy;
+  final bool manualEdits;
+  final String? conflictMessage;
+  final VoidCallback onToggleEditMode;
   final ValueChanged<String> onToggle;
   final ValueChanged<DecentSamplerGroupInfo> onPreview;
   final void Function(String groupKey, int layer) onVelocityChanged;
@@ -2287,17 +2483,33 @@ class _GroupMappingPanel extends StatelessWidget {
               ),
             ),
             const Spacer(),
+            _DecentRowEditModeButton(
+              manualEdits: manualEdits,
+              onPressed: onToggleEditMode,
+            ),
+            const SizedBox(width: 8),
             TextButton(onPressed: onSelectAll, child: const Text('Select all')),
             TextButton(onPressed: onClear, child: const Text('Clear')),
           ],
         ),
         const SizedBox(height: 6),
         Text(
-          'Groups are Decent\'s internal sample sections. Preview rows, select the material you want, then edit Low, Root, Vel, or RR if needed.',
+          manualEdits
+              ? 'Manual edits leave rows where you put them. Fix any overlap before continuing.'
+              : 'Smart edits keep the Disting map valid as you select and edit rows.',
           style: theme.textTheme.bodySmall?.copyWith(
             color: theme.colorScheme.onSurfaceVariant,
           ),
         ),
+        if (conflictMessage != null) ...[
+          const SizedBox(height: 4),
+          Text(
+            conflictMessage!,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.error,
+            ),
+          ),
+        ],
         const SizedBox(height: 6),
         DecoratedBox(
           decoration: BoxDecoration(
