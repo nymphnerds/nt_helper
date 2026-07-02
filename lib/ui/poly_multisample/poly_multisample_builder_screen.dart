@@ -2346,15 +2346,18 @@ class _TagSelectionPanel extends StatelessWidget {
             color: theme.colorScheme.onSurfaceVariant,
           ),
         ),
-        if (conflictMessage != null) ...[
-          const SizedBox(height: 4),
-          Text(
-            conflictMessage!,
+        const SizedBox(height: 4),
+        SizedBox(
+          height: 18,
+          child: Text(
+            conflictMessage ?? '',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
             style: theme.textTheme.bodySmall?.copyWith(
               color: theme.colorScheme.error,
             ),
           ),
-        ],
+        ),
         const SizedBox(height: 6),
         DecoratedBox(
           decoration: BoxDecoration(
@@ -2501,15 +2504,18 @@ class _GroupMappingPanel extends StatelessWidget {
             color: theme.colorScheme.onSurfaceVariant,
           ),
         ),
-        if (conflictMessage != null) ...[
-          const SizedBox(height: 4),
-          Text(
-            conflictMessage!,
+        const SizedBox(height: 4),
+        SizedBox(
+          height: 18,
+          child: Text(
+            conflictMessage ?? '',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
             style: theme.textTheme.bodySmall?.copyWith(
               color: theme.colorScheme.error,
             ),
           ),
-        ],
+        ),
         const SizedBox(height: 6),
         DecoratedBox(
           decoration: BoxDecoration(
