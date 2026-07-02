@@ -4143,6 +4143,32 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
     });
   }
 
+  void _clearCustomDraft() {
+    if (!widget.isCustomDraft || _regions.isEmpty || _applying) return;
+    unawaited(_samplePlayer.stop());
+    _clearLoopPreviewFile();
+    setState(() {
+      _regions = [];
+      _baselineRegions = [];
+      _mapLanes = [];
+      _mapMinMidi = _initialMapMinMidi(_regions);
+      _mapMaxMidi = _initialMapMaxMidi(_regions, _mapMinMidi);
+      _mapRevision++;
+      _mapFocusMidiOverride = null;
+      _selectedPath = null;
+      _selectedPaths = {};
+      _lastListSelectedIndex = null;
+      _playingPath = null;
+      _waveformCache.clear();
+      _waveformFutures.clear();
+      _loopDrafts.clear();
+      _savedLoopDrafts.clear();
+      _loopMetadataPresent.clear();
+      _loopEnabledDrafts.clear();
+      _wavEditDrafts.clear();
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -4221,6 +4247,14 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
                         : _saveCustomDraft,
                     icon: const Icon(Icons.save_as, size: 18),
                     label: Text(_applying ? 'Saving...' : 'Save as'),
+                  ),
+                  const SizedBox(width: 8),
+                  OutlinedButton.icon(
+                    onPressed: _regions.isEmpty || _applying
+                        ? null
+                        : _clearCustomDraft,
+                    icon: const Icon(Icons.delete_sweep_outlined, size: 18),
+                    label: const Text('Clear all'),
                   ),
                   const SizedBox(width: 8),
                 ],
