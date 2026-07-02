@@ -17,6 +17,11 @@ Current release:
 - Windows zip: `nt_helper-windows-poly-multisample-builder-test-v10.zip`
 - SHA256: `a706d91a8f61d451f0c5cfa90543778e916db865af3df31d0bc24307762575d5`
 
+More detail:
+
+- [Nymphs-Fork handoff](docs/NYMPHS_FORK_HANDOFF.md)
+- [v10 release notes](docs/releases/poly-multisample-builder-test-v10.md)
+
 Fork chronology:
 
 ### 2026-07-02 v10
@@ -43,11 +48,6 @@ Fork chronology:
 - Merged developer `upstream/main` again at `30c5aef2`, bringing in v2.42.3+281 and the Windows CI VC++ runtime bundling update.
 - Merged developer `upstream/main` again at `0077f24b`, bringing in v2.42.5+283, the Windows Inno Setup installer workflow, and USB video capture threading hardening.
 - Merged developer `upstream/main` again at `95085858`, bringing in v2.42.7+285, the Windows installer VC++ redistributable prompt, and the updated CI packaging approach.
-
-More detail:
-
-- [Nymphs-Fork handoff](docs/NYMPHS_FORK_HANDOFF.md)
-- [v10 release notes](docs/releases/poly-multisample-builder-test-v10.md)
 
 ---
 
