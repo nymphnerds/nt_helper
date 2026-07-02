@@ -43,6 +43,8 @@ Branch status after the six upstream merges and Decent structural-tag pass:
 - Current fork work sits on top of all six syncs and includes the structural Decent tag/import cleanup.
 - Current release tag target: `poly-multisample-builder-test-v10`.
 - Current Windows zip target: `nt_helper-windows-poly-multisample-builder-test-v10.zip`.
+- Current release page: <https://github.com/nymphnerds/nt_helper/releases/tag/poly-multisample-builder-test-v10>.
+- Current zip SHA256: `a706d91a8f61d451f0c5cfa90543778e916db865af3df31d0bc24307762575d5`.
 - Latest fork change: Decent Manual edits no longer shift/reseed rows, non-XML Decent modes export the full visible row mapping, and the Decent tag/group header actions are aligned.
 
 First upstream sync brought in:
