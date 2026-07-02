@@ -6411,7 +6411,9 @@ class _KeyMapSectionState extends State<_KeyMapSection> {
       final focusX =
           layout.left +
           ((clampedFocus - layout.minMidi) / layout.midiSpan) * layout.width;
-      final target = (focusX - layout.left).clamp(
+      final noteWidth = layout.width / layout.midiSpan;
+      final viewportWidth = _scrollController.position.viewportDimension;
+      final target = (focusX + (noteWidth / 2) - (viewportWidth / 2)).clamp(
         _scrollController.position.minScrollExtent,
         _scrollController.position.maxScrollExtent,
       );
