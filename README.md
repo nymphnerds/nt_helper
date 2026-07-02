@@ -17,11 +17,6 @@ Current release:
 - Windows zip: `nt_helper-windows-poly-multisample-builder-test-v10.zip`
 - SHA256: `a706d91a8f61d451f0c5cfa90543778e916db865af3df31d0bc24307762575d5`
 
-More detail:
-
-- [Nymphs-Fork handoff](docs/NYMPHS_FORK_HANDOFF.md)
-- [v10 release notes](docs/releases/poly-multisample-builder-test-v10.md)
-
 Fork chronology:
 
 ### 2026-07-02 v10
