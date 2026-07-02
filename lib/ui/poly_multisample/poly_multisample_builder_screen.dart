@@ -4322,10 +4322,16 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
     _clearLoopPreviewFile();
     await _samplePlayer.setVolume(_previewGainLinear);
     var sourcePath = region.path;
-    if (_loopPreviewEnabled) {
-      final loopPath = _waveformMode == _WaveformMode.destructive
-          ? await _writeDestructivePreviewFile(region, overview)
-          : await _writeLoopPreviewFile(region, overview, markers);
+    if (_waveformMode == _WaveformMode.destructive) {
+      final previewPath = await _writeDestructivePreviewFile(region, overview);
+      if (previewPath != null) {
+        sourcePath = previewPath;
+      }
+      await _samplePlayer.setReleaseMode(
+        _loopPreviewEnabled ? ReleaseMode.loop : ReleaseMode.release,
+      );
+    } else if (_loopPreviewEnabled) {
+      final loopPath = await _writeLoopPreviewFile(region, overview, markers);
       if (loopPath != null) {
         sourcePath = loopPath;
         await _samplePlayer.setReleaseMode(ReleaseMode.loop);
@@ -4379,7 +4385,10 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
   }
 
   void _refreshLoopPreviewFor(PolySampleRegion region) {
-    if (!_loopPreviewEnabled || _playingPath != region.path) {
+    if (_playingPath != region.path || !_playerPlaying) {
+      return;
+    }
+    if (!_loopPreviewEnabled && _waveformMode != _WaveformMode.destructive) {
       return;
     }
     unawaited(_playSamplePreview(region));
@@ -9319,11 +9328,14 @@ class _FadeCurvePainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
+    const strokeWidth = 2.0;
+    final inset = strokeWidth / 2;
+    final drawableHeight = math.max(0.0, size.height - strokeWidth);
     final path = Path();
     for (var i = 0; i <= 32; i++) {
       final x = i / 32;
       final y = _curveValue(x);
-      final point = Offset(x * size.width, (1 - y) * size.height);
+      final point = Offset(x * size.width, inset + (1 - y) * drawableHeight);
       if (i == 0) {
         path.moveTo(point.dx, point.dy);
       } else {
@@ -9334,7 +9346,7 @@ class _FadeCurvePainter extends CustomPainter {
       path,
       Paint()
         ..color = color
-        ..strokeWidth = 2
+        ..strokeWidth = strokeWidth
         ..style = PaintingStyle.stroke,
     );
   }
@@ -9487,7 +9499,8 @@ class _WaveformPainter extends CustomPainter {
       size.width,
     ).clamp(startX, endX);
     final gain = math.pow(10, draft.gainDb / 20).toDouble().clamp(0.0, 2.0);
-    final baselineY = size.height - 10;
+    const strokeWidth = 2.0;
+    final baselineY = size.height - strokeWidth / 2;
     final gainY = (size.height / 2) * (1 - (gain / 2));
 
     final fillPaint = Paint()
@@ -9497,7 +9510,7 @@ class _WaveformPainter extends CustomPainter {
 
     final paint = Paint()
       ..color = colorScheme.tertiary.withValues(alpha: 0.85)
-      ..strokeWidth = 2
+      ..strokeWidth = strokeWidth
       ..style = PaintingStyle.stroke;
     final path = Path()..moveTo(startX, baselineY);
     _appendFadeCurve(

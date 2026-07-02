@@ -2,15 +2,23 @@
 
 ## Nymphs-Fork Poly Multisample Builder
 
-Latest v10 changes:
+Latest v11 changes:
 
-- Decent Manual edits do not shift, reseed, swap, or prune rows.
-- Manual edits show overlap warnings and block invalid imports before Continue.
-- Chromatic, Velocity layers, Round robins, and Add unmapped export the visible row mapping.
-- Use Decent map shows XML-derived rows and warns where Decent behavior does not map cleanly to Disting.
-- Loose WAV import keeps the row-based preview and per-row Root, Low, Vel, and RR controls.
+- Destructive WAV preview now plays the rendered edit, including trim start/end, fades, gain, and normalize.
+- Active destructive preview refreshes when edit controls change, so playback follows the current draft.
+- Destructive fade overlays now reach the waveform panel floor instead of floating above it.
+- Fade curve picker icons now draw their endpoints inside the visible tile bounds.
+- v10 Decent Manual edit, visible-row export, and loose WAV row-mapping behavior remains intact.
 
 Fork chronology:
+
+### 2026-07-02 v11
+
+- Destructive WAV preview now renders a temporary edited WAV for playback instead of playing the untouched source file.
+- Start/end trim, fade, gain, and normalize changes refresh active destructive preview playback.
+- The destructive waveform fade overlay now reaches the panel floor, matching the actual fade-to-silence behavior.
+- Fade curve picker glyphs now draw to their visible endpoints without clipping.
+- Windows release build completed successfully and was packaged as `nt_helper-windows-poly-multisample-builder-test-v11.zip`.
 
 ### 2026-07-02 v10
 
