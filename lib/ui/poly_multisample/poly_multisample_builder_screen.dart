@@ -746,7 +746,7 @@ class _DecentImportOptionsDialogState
   int _decentMapRootMidi = 36;
   int _decentMapVelocityLayer = 1;
   bool _includeSourceDocs = true;
-  bool _manualDecentRowEdits = false;
+  bool _manualDecentRowEdits = true;
   final AudioPlayer _previewPlayer = AudioPlayer();
   final Map<_DecentWavCandidate, File> _previewFiles = {};
   StreamSubscription<void>? _previewCompleteSubscription;
@@ -1130,6 +1130,7 @@ class _DecentImportOptionsDialogState
     _tagKeyRanges = _defaultTagKeyRanges(_selectedTagKeys);
     _tagRoundRobins = _defaultTagRoundRobins(_selectedTagKeys);
     _decentQuickMapping = _DecentQuickMapping.keepXml;
+    _manualDecentRowEdits = true;
     _clearEditedDecentMapping();
   }
 
@@ -1335,6 +1336,7 @@ class _DecentImportOptionsDialogState
   void _setDecentQuickMapping(_DecentQuickMapping mode) {
     setState(() {
       _decentQuickMapping = mode;
+      _manualDecentRowEdits = mode == _DecentQuickMapping.keepXml;
       _applyDecentQuickMappingToState();
       if (!_manualDecentRowEdits && mode == _DecentQuickMapping.keepXml) {
         _pruneKeepXmlSelectionCollisions();
@@ -2168,7 +2170,7 @@ class _DecentQuickMappingPanel extends StatelessWidget {
             Text('Mapping', style: theme.textTheme.titleSmall),
             ChoiceChip(
               selected: mode == _DecentQuickMapping.keepXml,
-              label: const Text('Keep Decent map'),
+              label: const Text('Use Decent map'),
               onSelected: (_) => onModeChanged(_DecentQuickMapping.keepXml),
             ),
             ChoiceChip(
@@ -2224,7 +2226,7 @@ class _DecentQuickMappingPanel extends StatelessWidget {
               child: Text(
                 switch (mode) {
                   _DecentQuickMapping.keepXml =>
-                    'Show the Decent XML map as Low, Root, Vel, and RR. Row notes warn when Disting cannot reproduce a Decent layer/control.',
+                    'Show the Decent XML map first. Edit rows when Disting needs a simpler static mapping.',
                   _DecentQuickMapping.chromatic =>
                     'Place selected items one per key from the root start.',
                   _DecentQuickMapping.velocityLayers =>
@@ -2378,6 +2380,7 @@ class _TagSelectionPanel extends StatelessWidget {
                   tag: tags[index],
                   selected: selectedKeys.contains(tags[index].key),
                   note: _tagXmlNote(tags[index], mappingMode: mappingMode),
+                  useDecentMap: mappingMode == _DecentQuickMapping.keepXml,
                   velocityEdited: editedVelocityKeys.contains(tags[index].key),
                   rangeEdited: editedRangeKeys.contains(tags[index].key),
                   roundRobinEdited: editedRoundRobinKeys.contains(
@@ -2536,6 +2539,7 @@ class _GroupMappingPanel extends StatelessWidget {
                   group: groups[index],
                   selected: selectedKeys.contains(groups[index].key),
                   note: _groupXmlNote(groups[index], mappingMode: mappingMode),
+                  useDecentMap: mappingMode == _DecentQuickMapping.keepXml,
                   velocityEdited: editedVelocityKeys.contains(
                     groups[index].key,
                   ),
@@ -2611,6 +2615,7 @@ class _GroupMappingRow extends StatelessWidget {
     required this.group,
     required this.selected,
     required this.note,
+    required this.useDecentMap,
     required this.velocityEdited,
     required this.rangeEdited,
     required this.roundRobinEdited,
@@ -2631,6 +2636,7 @@ class _GroupMappingRow extends StatelessWidget {
   final DecentSamplerGroupInfo group;
   final bool selected;
   final String note;
+  final bool useDecentMap;
   final bool velocityEdited;
   final bool rangeEdited;
   final bool roundRobinEdited;
@@ -2724,58 +2730,151 @@ class _GroupMappingRow extends StatelessWidget {
                 const SizedBox(width: 12),
                 SizedBox(
                   width: 120,
-                  child: _SampleNoteStepper(
-                    label: 'Low',
-                    value: normalized.lowMidi,
-                    onChanged: (value) => onRangeChanged(
-                      DecentSamplerTagKeyRange(
-                        lowMidi: value.clamp(0, normalized.rootMidi).toInt(),
-                        rootMidi: normalized.rootMidi,
-                        highMidi: normalized.highMidi,
-                      ),
-                    ),
-                  ),
+                  child: useDecentMap && !rangeEdited
+                      ? _DecentXmlMappingStepper(
+                          label: 'Low',
+                          value: _xmlNoteControlValue(
+                            group.noteRange,
+                            normalized,
+                            rootCount: group.rootCount,
+                          ),
+                          tooltip: 'XML notes: ${group.noteRange}',
+                          onDecrement: normalized.lowMidi <= 0
+                              ? null
+                              : () => onRangeChanged(
+                                  DecentSamplerTagKeyRange(
+                                    lowMidi: normalized.lowMidi - 1,
+                                    rootMidi: normalized.rootMidi,
+                                    highMidi: normalized.highMidi,
+                                  ),
+                                ),
+                          onIncrement: normalized.lowMidi >= normalized.rootMidi
+                              ? null
+                              : () => onRangeChanged(
+                                  DecentSamplerTagKeyRange(
+                                    lowMidi: normalized.lowMidi + 1,
+                                    rootMidi: normalized.rootMidi,
+                                    highMidi: normalized.highMidi,
+                                  ),
+                                ),
+                        )
+                      : _SampleNoteStepper(
+                          label: 'Low',
+                          value: normalized.lowMidi,
+                          onChanged: (value) => onRangeChanged(
+                            DecentSamplerTagKeyRange(
+                              lowMidi: value
+                                  .clamp(0, normalized.rootMidi)
+                                  .toInt(),
+                              rootMidi: normalized.rootMidi,
+                              highMidi: normalized.highMidi,
+                            ),
+                          ),
+                        ),
                 ),
                 const SizedBox(width: 6),
                 SizedBox(
                   width: 120,
-                  child: _SampleNoteStepper(
-                    label: 'Root',
-                    value: normalized.rootMidi,
-                    min: normalized.lowMidi,
-                    max: normalized.highMidi,
-                    onChanged: (value) => onRangeChanged(
-                      DecentSamplerTagKeyRange(
-                        lowMidi: normalized.lowMidi,
-                        rootMidi: value
-                            .clamp(normalized.lowMidi, normalized.highMidi)
-                            .toInt(),
-                        highMidi: normalized.highMidi,
-                      ),
-                    ),
-                  ),
+                  child: useDecentMap && !rangeEdited
+                      ? _DecentXmlMappingStepper(
+                          label: 'Root',
+                          value: _xmlNoteControlValue(
+                            group.noteRange,
+                            normalized,
+                            rootCount: group.rootCount,
+                          ),
+                          tooltip: 'XML notes: ${group.noteRange}',
+                          onDecrement: normalized.rootMidi <= normalized.lowMidi
+                              ? null
+                              : () => onRangeChanged(
+                                  DecentSamplerTagKeyRange(
+                                    lowMidi: normalized.lowMidi,
+                                    rootMidi: normalized.rootMidi - 1,
+                                    highMidi: normalized.highMidi,
+                                  ),
+                                ),
+                          onIncrement:
+                              normalized.rootMidi >= normalized.highMidi
+                              ? null
+                              : () => onRangeChanged(
+                                  DecentSamplerTagKeyRange(
+                                    lowMidi: normalized.lowMidi,
+                                    rootMidi: normalized.rootMidi + 1,
+                                    highMidi: normalized.highMidi,
+                                  ),
+                                ),
+                        )
+                      : _SampleNoteStepper(
+                          label: 'Root',
+                          value: normalized.rootMidi,
+                          min: normalized.lowMidi,
+                          max: normalized.highMidi,
+                          onChanged: (value) => onRangeChanged(
+                            DecentSamplerTagKeyRange(
+                              lowMidi: normalized.lowMidi,
+                              rootMidi: value
+                                  .clamp(
+                                    normalized.lowMidi,
+                                    normalized.highMidi,
+                                  )
+                                  .toInt(),
+                              highMidi: normalized.highMidi,
+                            ),
+                          ),
+                        ),
                 ),
                 const SizedBox(width: 6),
                 SizedBox(
                   width: 120,
-                  child: _SampleNumberStepper(
-                    label: 'Vel',
-                    value: velocityLayer.clamp(1, 32).toInt(),
-                    min: 1,
-                    max: 32,
-                    onChanged: onVelocityChanged,
-                  ),
+                  child: useDecentMap && !velocityEdited
+                      ? _DecentXmlMappingStepper(
+                          label: 'Vel',
+                          value: _xmlVelocityControlValue(
+                            group.velocitySummary,
+                            velocityLayer,
+                          ),
+                          tooltip: 'XML velocity: ${group.velocitySummary}',
+                          onDecrement: velocityLayer <= 1
+                              ? null
+                              : () => onVelocityChanged(velocityLayer - 1),
+                          onIncrement: velocityLayer >= 32
+                              ? null
+                              : () => onVelocityChanged(velocityLayer + 1),
+                        )
+                      : _SampleNumberStepper(
+                          label: 'Vel',
+                          value: velocityLayer.clamp(1, 32).toInt(),
+                          min: 1,
+                          max: 32,
+                          onChanged: onVelocityChanged,
+                        ),
                 ),
                 const SizedBox(width: 6),
                 SizedBox(
                   width: 120,
-                  child: _SampleNumberStepper(
-                    label: 'RR',
-                    value: roundRobin.clamp(1, 32).toInt(),
-                    min: 1,
-                    max: 32,
-                    onChanged: onRoundRobinChanged,
-                  ),
+                  child: useDecentMap && !roundRobinEdited
+                      ? _DecentXmlMappingStepper(
+                          label: 'RR',
+                          value: _xmlRoundRobinControlValue(
+                            group.roundRobinSummary,
+                            roundRobin,
+                          ),
+                          tooltip:
+                              'XML round robins: ${group.roundRobinSummary}',
+                          onDecrement: roundRobin <= 1
+                              ? null
+                              : () => onRoundRobinChanged(roundRobin - 1),
+                          onIncrement: roundRobin >= 32
+                              ? null
+                              : () => onRoundRobinChanged(roundRobin + 1),
+                        )
+                      : _SampleNumberStepper(
+                          label: 'RR',
+                          value: roundRobin.clamp(1, 32).toInt(),
+                          min: 1,
+                          max: 32,
+                          onChanged: onRoundRobinChanged,
+                        ),
                 ),
               ],
             ],
@@ -2791,6 +2890,7 @@ class _TagCheckboxRow extends StatelessWidget {
     required this.tag,
     required this.selected,
     required this.note,
+    required this.useDecentMap,
     required this.velocityEdited,
     required this.rangeEdited,
     required this.roundRobinEdited,
@@ -2811,6 +2911,7 @@ class _TagCheckboxRow extends StatelessWidget {
   final DecentSamplerTag tag;
   final bool selected;
   final String note;
+  final bool useDecentMap;
   final bool velocityEdited;
   final bool rangeEdited;
   final bool roundRobinEdited;
@@ -2907,58 +3008,148 @@ class _TagCheckboxRow extends StatelessWidget {
                 const SizedBox(width: 12),
                 SizedBox(
                   width: 120,
-                  child: _SampleNoteStepper(
-                    label: 'Low',
-                    value: normalized.lowMidi,
-                    onChanged: (value) => onRangeChanged(
-                      DecentSamplerTagKeyRange(
-                        lowMidi: value.clamp(0, normalized.rootMidi).toInt(),
-                        rootMidi: normalized.rootMidi,
-                        highMidi: normalized.highMidi,
-                      ),
-                    ),
-                  ),
+                  child: useDecentMap && !rangeEdited
+                      ? _DecentXmlMappingStepper(
+                          label: 'Low',
+                          value: _xmlNoteControlValue(
+                            tag.noteRange,
+                            normalized,
+                          ),
+                          tooltip: 'XML notes: ${tag.noteRange}',
+                          onDecrement: normalized.lowMidi <= 0
+                              ? null
+                              : () => onRangeChanged(
+                                  DecentSamplerTagKeyRange(
+                                    lowMidi: normalized.lowMidi - 1,
+                                    rootMidi: normalized.rootMidi,
+                                    highMidi: normalized.highMidi,
+                                  ),
+                                ),
+                          onIncrement: normalized.lowMidi >= normalized.rootMidi
+                              ? null
+                              : () => onRangeChanged(
+                                  DecentSamplerTagKeyRange(
+                                    lowMidi: normalized.lowMidi + 1,
+                                    rootMidi: normalized.rootMidi,
+                                    highMidi: normalized.highMidi,
+                                  ),
+                                ),
+                        )
+                      : _SampleNoteStepper(
+                          label: 'Low',
+                          value: normalized.lowMidi,
+                          onChanged: (value) => onRangeChanged(
+                            DecentSamplerTagKeyRange(
+                              lowMidi: value
+                                  .clamp(0, normalized.rootMidi)
+                                  .toInt(),
+                              rootMidi: normalized.rootMidi,
+                              highMidi: normalized.highMidi,
+                            ),
+                          ),
+                        ),
                 ),
                 const SizedBox(width: 6),
                 SizedBox(
                   width: 120,
-                  child: _SampleNoteStepper(
-                    label: 'Root',
-                    value: normalized.rootMidi,
-                    min: normalized.lowMidi,
-                    max: normalized.highMidi,
-                    onChanged: (value) => onRangeChanged(
-                      DecentSamplerTagKeyRange(
-                        lowMidi: normalized.lowMidi,
-                        rootMidi: value
-                            .clamp(normalized.lowMidi, normalized.highMidi)
-                            .toInt(),
-                        highMidi: normalized.highMidi,
-                      ),
-                    ),
-                  ),
+                  child: useDecentMap && !rangeEdited
+                      ? _DecentXmlMappingStepper(
+                          label: 'Root',
+                          value: _xmlNoteControlValue(
+                            tag.noteRange,
+                            normalized,
+                          ),
+                          tooltip: 'XML notes: ${tag.noteRange}',
+                          onDecrement: normalized.rootMidi <= normalized.lowMidi
+                              ? null
+                              : () => onRangeChanged(
+                                  DecentSamplerTagKeyRange(
+                                    lowMidi: normalized.lowMidi,
+                                    rootMidi: normalized.rootMidi - 1,
+                                    highMidi: normalized.highMidi,
+                                  ),
+                                ),
+                          onIncrement:
+                              normalized.rootMidi >= normalized.highMidi
+                              ? null
+                              : () => onRangeChanged(
+                                  DecentSamplerTagKeyRange(
+                                    lowMidi: normalized.lowMidi,
+                                    rootMidi: normalized.rootMidi + 1,
+                                    highMidi: normalized.highMidi,
+                                  ),
+                                ),
+                        )
+                      : _SampleNoteStepper(
+                          label: 'Root',
+                          value: normalized.rootMidi,
+                          min: normalized.lowMidi,
+                          max: normalized.highMidi,
+                          onChanged: (value) => onRangeChanged(
+                            DecentSamplerTagKeyRange(
+                              lowMidi: normalized.lowMidi,
+                              rootMidi: value
+                                  .clamp(
+                                    normalized.lowMidi,
+                                    normalized.highMidi,
+                                  )
+                                  .toInt(),
+                              highMidi: normalized.highMidi,
+                            ),
+                          ),
+                        ),
                 ),
                 const SizedBox(width: 6),
                 SizedBox(
                   width: 120,
-                  child: _SampleNumberStepper(
-                    label: 'Vel',
-                    value: velocityLayer.clamp(1, 32).toInt(),
-                    min: 1,
-                    max: 32,
-                    onChanged: onVelocityChanged,
-                  ),
+                  child: useDecentMap && !velocityEdited
+                      ? _DecentXmlMappingStepper(
+                          label: 'Vel',
+                          value: _xmlVelocityControlValue(
+                            tag.velocitySummary,
+                            velocityLayer,
+                          ),
+                          tooltip: 'XML velocity: ${tag.velocitySummary}',
+                          onDecrement: velocityLayer <= 1
+                              ? null
+                              : () => onVelocityChanged(velocityLayer - 1),
+                          onIncrement: velocityLayer >= 32
+                              ? null
+                              : () => onVelocityChanged(velocityLayer + 1),
+                        )
+                      : _SampleNumberStepper(
+                          label: 'Vel',
+                          value: velocityLayer.clamp(1, 32).toInt(),
+                          min: 1,
+                          max: 32,
+                          onChanged: onVelocityChanged,
+                        ),
                 ),
                 const SizedBox(width: 6),
                 SizedBox(
                   width: 120,
-                  child: _SampleNumberStepper(
-                    label: 'RR',
-                    value: roundRobin.clamp(1, 32).toInt(),
-                    min: 1,
-                    max: 32,
-                    onChanged: onRoundRobinChanged,
-                  ),
+                  child: useDecentMap && !roundRobinEdited
+                      ? _DecentXmlMappingStepper(
+                          label: 'RR',
+                          value: _xmlRoundRobinControlValue(
+                            tag.roundRobinSummary,
+                            roundRobin,
+                          ),
+                          tooltip: 'XML round robins: ${tag.roundRobinSummary}',
+                          onDecrement: roundRobin <= 1
+                              ? null
+                              : () => onRoundRobinChanged(roundRobin - 1),
+                          onIncrement: roundRobin >= 32
+                              ? null
+                              : () => onRoundRobinChanged(roundRobin + 1),
+                        )
+                      : _SampleNumberStepper(
+                          label: 'RR',
+                          value: roundRobin.clamp(1, 32).toInt(),
+                          min: 1,
+                          max: 32,
+                          onChanged: onRoundRobinChanged,
+                        ),
                 ),
               ],
             ],
@@ -2967,6 +3158,78 @@ class _TagCheckboxRow extends StatelessWidget {
       ),
     );
   }
+}
+
+class _DecentXmlMappingStepper extends StatelessWidget {
+  const _DecentXmlMappingStepper({
+    required this.label,
+    required this.value,
+    required this.tooltip,
+    required this.onDecrement,
+    required this.onIncrement,
+  });
+
+  final String label;
+  final String value;
+  final String tooltip;
+  final VoidCallback? onDecrement;
+  final VoidCallback? onIncrement;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: _SampleEditStepper(
+        label: label,
+        value: value,
+        onDecrement: onDecrement,
+        onIncrement: onIncrement,
+      ),
+    );
+  }
+}
+
+String _xmlNoteControlValue(
+  String noteRange,
+  DecentSamplerTagKeyRange range, {
+  int? rootCount,
+}) {
+  final parsedRootCount =
+      rootCount ??
+      int.tryParse(
+        RegExp(r'(\d+)\s+roots?').firstMatch(noteRange)?.group(1) ?? '',
+      );
+  if (parsedRootCount != null && parsedRootCount > 1) {
+    return '$parsedRootCount roots';
+  }
+  final compact = noteRange.replaceAll(' - ', '-');
+  if (compact.isNotEmpty && compact != 'No notes' && compact.length <= 9) {
+    return compact;
+  }
+  if (range.lowMidi == range.highMidi) {
+    return PolyMultisampleParser.midiToNoteName(range.rootMidi);
+  }
+  return 'XML notes';
+}
+
+String _xmlVelocityControlValue(String velocitySummary, int velocityLayer) {
+  final ranges = RegExp(
+    r'\b\d+\s*-\s*\d+\b',
+  ).allMatches(velocitySummary).length;
+  if (ranges > 1) return '$ranges ranges';
+  if (ranges == 1) return '1 range';
+  return 'Vel $velocityLayer';
+}
+
+String _xmlRoundRobinControlValue(String roundRobinSummary, int roundRobin) {
+  final match = RegExp(r'RR\s+(\d+)(?:-(\d+))?').firstMatch(roundRobinSummary);
+  if (match == null) return 'RR $roundRobin';
+  final start = int.tryParse(match.group(1) ?? '');
+  final end = int.tryParse(match.group(2) ?? '') ?? start;
+  if (start != null && end != null && end > start) {
+    return '${end - start + 1} RR';
+  }
+  return 'RR ${start ?? roundRobin}';
 }
 
 class _SummaryBullet extends StatelessWidget {

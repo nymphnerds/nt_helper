@@ -25,12 +25,21 @@ This fork/branch contains an experimental Windows test build for a new Poly Mult
 - Build output copied to `C:\Users\babyj\nt_helper-build\build\windows\x64\runner\Release`.
 - Fresh executable: `C:\Users\babyj\nt_helper-build\build\windows\x64\runner\Release\nt_helper.exe`.
 
+### 2026-07-02 Decent Manual Edit Mode
+
+- Adds a `Smart edits` / `Manual edits` toggle to Decent tag/group mapping rows.
+- `Smart edits` keeps the existing guardrails: selecting or editing rows shifts/conflicts away where possible so the Disting map stays valid.
+- `Manual edits` leaves rows exactly where the user puts them, shows an overlap warning, and disables `Continue` until the selected rows no longer collide on note range, velocity layer, and RR lane.
+- `Use Decent map` defaults to Manual edits and shows XML-derived summaries such as roots, velocity ranges, and RR slots until a row is explicitly overridden.
+- Chromatic, Velocity layers, Round robins, and Add unmapped default back to Smart edits because those modes intentionally simplify the selection.
+- Keeps Decent row controls compact: warning space is reserved to prevent layout jumps, and Chromatic `Root start` + `Vel` controls stay on the same line.
+
 ### 2026-07-01 Structural Decent Tag Logic
 
 - Decent tag/group rows now describe the actual sample structure found in the XML, not a guessed role from names like `Dry`, `Tape`, `raw`, `mic`, or `noise`.
 - Keeps every real tag/group visible when it points at samples; the user decides by previewing and selecting material.
 - Shows structure such as `1 fixed-pitch sample across G2-A2`, `3 pitched samples, one per key, G2-A2`, velocity-range counts, and RR slot counts.
-- Keeps `Keep Decent map` row controls editable while preventing impossible same-slot selections unless the user changes Low/Root/Vel/RR to make the rows distinct.
+- Keeps `Use Decent map` row controls editable while preventing impossible same-slot selections unless the user changes Low/Root/Vel/RR to make the rows distinct.
 - Removes fragile keyword-based tag selection/filtering from the Decent chooser; names are labels, structure is evidence.
 - Adds regression coverage for fixed-pitch bed tags, structure-based tag summaries, tag preview sources, tag velocity overrides, and RR-only tag mapping.
 
@@ -41,10 +50,10 @@ This fork/branch contains an experimental Windows test build for a new Poly Mult
 - Adds quick loose-WAV seeding for Chromatic, Round robins, and Velocity layers while preserving row-level edits before adding.
 - Makes Decent Sampler sources always open the strategy/options screen after analysis, even when the XML looks simple.
 - Keeps Decent preset selection to one preset per staged folder, matching the one-folder Poly Multisample workflow.
-- Lets Decent imports choose Tags or Groups where useful, then choose `Keep Decent map`, `Chromatic`, `Velocity layers`, `Round robins`, or `Add unmapped`.
+- Lets Decent imports choose Tags or Groups where useful, then choose `Use Decent map`, `Chromatic`, `Velocity layers`, `Round robins`, or `Add unmapped`.
 - Shows Decent XML-derived tag/group mapping summaries in the rows and tooltips, including note range, velocity range, RR/seqPosition, fixed-pitch beds, and Decent-only layer/control warnings.
 - Adds preview buttons to Decent tag/group rows.
-- Keeps `Keep Decent map` honest: compatible XML Low/Root/Vel/RR/loop data is preserved, while tooltips show where Decent layer/control behaviour cannot be reproduced directly on Disting.
+- Keeps `Use Decent map` honest: compatible XML Low/Root/Vel/RR/loop data is preserved, while tooltips show where Decent layer/control behaviour cannot be reproduced directly on Disting.
 - Improves auto-preview and keyboard-map focus after import without clamping the available MIDI range.
 - Adds regression coverage for tag XML summaries, structure-based tag summaries, preview-source paths, forced tag RR behaviour, and Decent RR/velocity interactions.
 

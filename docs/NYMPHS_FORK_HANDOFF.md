@@ -161,8 +161,9 @@ Current structure:
 2. Choose one preset/instrument for this folder.
 3. Choose Tags or Groups inside that preset.
 4. Choose a mapping mode.
-5. Edit selected rows where needed.
-6. Continue stages directly from the structured Decent selection.
+5. Choose `Smart edits` or `Manual edits` for row editing.
+6. Edit selected rows where needed.
+7. Continue stages directly from the structured Decent selection.
 
 Rows should look like the actual editor controls:
 
@@ -174,6 +175,15 @@ Do not add a user-facing `High` control. In this workflow `Low` is the switch po
 
 Decent tag/group rows now support preview. Keep this: many Decent tags are vague (`raw`, `buzz`, `mic`, `contact`, `release`, etc.), so auditioning the representative source sample is part of the decision workflow.
 
+Rows have two edit behaviours:
+
+- **Smart edits**: the default. Selecting or editing a row may move/remove conflicting alternatives so the staged Disting map stays valid while the user works quickly.
+- **Manual edits**: complex-layer mode. Row edits stay exactly where the user puts them. If selected rows overlap on note range, velocity layer, and RR lane, show a warning and disable Continue until the user fixes the overlap.
+
+`Use Decent map` defaults to Manual edits because Decent XML can contain nested velocity ranges, RR slots, UI layers, and controls that may not fit Disting directly. The other mapping modes default back to Smart edits because they are deliberate simplification/seed actions.
+
+Keep the Manual warning line reserved in the layout so overlap messages do not make the tag/group list jump while editing.
+
 ## Disting NT Constraint
 
 This builder stages one Disting NT Poly Multisample folder. It is not Kontakt and it is not Decent Sampler.
@@ -182,7 +192,7 @@ Decent can express UI layers, mic mixes, tone/tape variants, enabled groups, and
 
 So Decent import must turn selected material into one static folder through one of these mappings:
 
-- **Keep Decent map**: show the Decent XML map through Disting fields and preserve compatible XML root, low/switch point, velocity, RR, and loop data.
+- **Use Decent map**: show the Decent XML map through Disting fields and preserve compatible XML root, low/switch point, velocity, RR, and loop data.
 - **Chromatic**: place selected tags/groups one per key from Root start.
 - **Velocity layers**: assign selected tags/groups to `Vel 1`, `Vel 2`, etc. in row order.
 - **Round robins**: assign selected tags/groups to `RR1`, `RR2`, etc. in row order.
@@ -190,9 +200,12 @@ So Decent import must turn selected material into one static folder through one 
 
 Round robins mode must not export stale velocity overrides. If the original XML has real velocity ranges, preserving those is fine; the RR quick action itself must not create velocity layers.
 
-Keep Decent map must be honest rather than magical. It should show what Decent said and also where Disting cannot behave the same way:
+Chromatic mode exposes `Root start` and `Vel`; keep those controls visually grouped on one line because they describe one seed action.
+
+Use Decent map must be honest rather than magical. It should show what Decent said and also where Disting cannot behave the same way:
 
 - tag/group tooltips should expose XML note range, explicit velocity ranges, and RR/`seqPosition` summaries
+- row controls should show XML summaries such as `13 roots`, `3 ranges`, or `4 RR` until the user edits that field; after edit, show the explicit Disting override value
 - row notes should describe the actual sample structure, not guessed names or roles
 - examples: `1 fixed-pitch sample across G2-A2`, `3 pitched samples, one per key, G2-A2`, `12 samples over 12 roots, C2-B2`, `2 velocity ranges`, `5 RR slots`
 - fixed-pitch beds such as tape/noise beds should stay visible when they point at real samples; they are not empty or junk just because the name looks like an effect/source label
@@ -245,9 +258,11 @@ The analyzer now exposes XML mapping summaries on both groups and tags:
 - round robin / `seqPosition` summary
 - representative preview source path
 
-Do not invent velocity layers for mic positions, tape/tone variants, reverb, room/close, DI/amp, or arbitrary tags. Only explicit Velocity layers mode should force row velocity numbers. Keep Decent map may preserve real XML velocity ranges when they exist.
+Do not invent velocity layers for mic positions, tape/tone variants, reverb, room/close, DI/amp, or arbitrary tags. Only explicit Velocity layers mode should force row velocity numbers. Use Decent map may preserve real XML velocity ranges when they exist.
 
 Switching mapping modes should reset row overrides back to Decent/default values before applying the new quick mapping. This prevents stale values such as V1/V2/V3 remaining after switching to RR mode.
+
+Smart/manual editing is not a mapping mode. It only controls whether the UI repairs conflicts immediately or lets the user build a complex mapping manually and blocks Continue until conflicts are resolved.
 
 ## Library Scan Lessons
 
@@ -299,7 +314,8 @@ The focused Decent test file currently covers:
 - structural banks as velocity layers while preserving RR
 - pure RR groups staying RR
 - forced tag RR not adding velocity layer names
-- Keep Decent map showing/editing selected rows without importing only one colliding layer
+- Use Decent map showing/editing selected rows without importing only one colliding layer
+- manual Decent row edits allowing temporary conflicts while blocking Continue
 - tag XML mapping summaries for note range, velocity ranges, and RR/`seqPosition`
 - structure-based tag summaries that do not depend on label names
 - fixed-pitch bed tags from real XML (`pitchKeyTrack="0"`) staying visible
@@ -339,6 +355,8 @@ Latest focused verification before this handoff update:
 - Treating mic/tape/tone/reverb variants as velocity layers by default.
 - Hiding row-level `Low`, `Root`, `Vel`, and `RR` controls.
 - Adding a `High` control to the import UI.
+- Letting Manual edits continue with overlapping selected note/range + velocity + RR lanes.
+- Letting Smart edits turn into an unmanageable jigsaw for complex maps; users must be able to switch to Manual edits.
 - Letting a quick mapping mode leave stale overrides from the previous mode.
 - Losing preview and per-row mapping in the loose WAV flow.
 - Matching tags by loose substrings instead of structured tag keys.
@@ -351,9 +369,11 @@ This fork is in a clean state when:
 - Decent import starts with analysis and one preset choice
 - Tags/Groups appear only where useful
 - mapping modes seed simple row values
+- Smart edits and Manual edits are available on Decent tag/group rows
+- Manual edits reserve warning space and block Continue on overlaps
 - rows remain editable through `Low`, `Root`, `Vel`, and `RR`
 - RR mode does not export stale velocity overrides
-- Keep Decent map preserves compatible XML mapping
+- Use Decent map preserves compatible XML mapping
 - Add unmapped lets the user finish mapping in the editor
 - focused Decent tests pass
 - targeted analyzer passes

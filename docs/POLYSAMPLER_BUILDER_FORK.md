@@ -17,7 +17,7 @@ Waveform display, audio preview, loop metadata edits, and destructive WAV edits 
 
 ## Import Logic
 
-The Decent importer reads the preset XML before converting. It reports the structure first, then asks how to map it when the library is ambiguous.
+The Decent importer reads the preset XML before converting. It always reports the detected structure first, then lets the user choose the material and mapping for one Disting NT Poly Multisample folder.
 
 The report tries to expose:
 
@@ -27,12 +27,18 @@ The report tries to expose:
 - round-robin/`seqPosition` use;
 - UI/controller bindings that suggest Decent-only controls such as volume fades, enabled switches, pan, or tuning.
 
-Available choices:
+Current flow:
 
-- `Use groups as velocity layers`: groups become V1, V2, V3 etc.; round robins remain round robins.
-- `Split groups into separate folders`: one Disting folder per group/layer/articulation; round robins remain round robins.
-- `Convert one group only`: choose one Decent group and ignore the rest.
-- `Default mapping`: keep the parser’s automatic behavior and report ambiguity.
+- choose one preset first when a Decent library contains multiple presets;
+- choose Tags or Groups where both expose useful structure;
+- choose `Use Decent map`, `Chromatic`, `Velocity layers`, `Round robins`, or `Add unmapped`;
+- preview tag/group rows before selecting them;
+- edit selected rows with Disting-style `Low`, `Root`, `Vel`, and `RR` controls;
+- use `Smart edits` for automatic conflict repair or `Manual edits` for complex mappings where overlaps are shown and `Continue` is blocked until fixed.
+
+`Use Decent map` defaults to Manual edits and shows XML summaries such as root counts, velocity ranges, and RR slots until the user overrides a field. Other mapping modes default to Smart edits.
+
+The importer deliberately does not expose a `High` control. `Low` is the switch point/range-boundary control used by the Disting NT Poly Multisample workflow.
 
 The importer ignores common macOS archive junk such as `__MACOSX/`, `.DS_Store`, and AppleDouble `._*` files.
 
@@ -45,11 +51,12 @@ Custom mode is a draft basket for mashup/sample-set creation.
 - `Add folder` accepts folders containing WAVs or extracted Decent content.
 - Decent sources show selectable groups and individual WAVs, without extracting the whole archive first.
 - Candidate WAVs can be auditioned in the selection dialog before staging them.
-- Selected WAVs can be staged with a compact mapping choice:
-  - `Use source / filename mapping`: use Decent XML first, or C3/_V2/_RR3-style filename tags for loose WAVs.
-  - `Add unmapped`: add files with no root note for manual mapping.
-  - `Spread across keys`: map selected files one-per-key from a chosen start note.
-  - `Stack as round robins`: map selected files onto one root/low note and velocity layer as RR1, RR2, RR3, etc.
+- Selected WAVs can be staged with a compact row editor:
+  - Chromatic maps selected files one-per-key from a chosen start note.
+  - Round robins stacks selected files on one root/low note and velocity layer as RR1, RR2, RR3, etc.
+  - Velocity layers stacks selected files on one root/low note as Vel 1, Vel 2, Vel 3, etc.
+  - `Add all to editor unmapped` bypasses mapping and leaves the rows for manual editor work.
+  - Each selected row still exposes preview, `Root`, `Low`, `Vel`, and `RR` controls before adding.
 - Multi-select removal only removes items from the draft; it does not delete source files.
 - `Save as` chooses an output folder.
 - `Save` reuses the remembered custom output folder.
