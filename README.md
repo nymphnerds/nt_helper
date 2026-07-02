@@ -32,7 +32,9 @@ This fork/branch contains an experimental Windows test build for a new Poly Mult
 - `Manual edits` leaves rows exactly where the user puts them, shows an overlap warning, and disables `Continue` until the selected rows no longer collide on note range, velocity layer, and RR lane.
 - `Use Decent map` defaults to Manual edits and shows XML-derived summaries such as roots, velocity ranges, and RR slots until a row is explicitly overridden.
 - Chromatic, Velocity layers, Round robins, and Add unmapped default back to Smart edits because those modes intentionally simplify the selection.
-- Keeps Decent row controls compact: warning space is reserved to prevent layout jumps, and Chromatic `Root start` + `Vel` controls stay on the same line.
+- In Manual edits, no quick mapping reseed or shifting occurs when selecting rows or changing seed controls; the UI only warns and blocks impossible overlaps.
+- In Chromatic, Velocity layers, Round robins, and Add unmapped, the importer exports the full visible Low/Root/Vel/RR row map instead of falling back to Decent XML for untouched axes.
+- Keeps Decent row controls compact: warning space is reserved to prevent layout jumps, Chromatic `Root start` + `Vel` controls stay on the same line, and the Smart/Manual + Select all + Clear header is aligned consistently.
 
 ### 2026-07-01 Structural Decent Tag Logic
 

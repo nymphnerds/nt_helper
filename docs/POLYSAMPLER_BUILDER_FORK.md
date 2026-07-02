@@ -38,6 +38,8 @@ Current flow:
 
 `Use Decent map` defaults to Manual edits and shows XML summaries such as root counts, velocity ranges, and RR slots until the user overrides a field. Other mapping modes default to Smart edits.
 
+In Manual edits, rows never shift, reseed, swap, or prune automatically; overlaps are shown and `Continue` is disabled until fixed. In Chromatic, Velocity layers, Round robins, and Add unmapped, the converter exports the full visible row mapping instead of falling back to Decent XML for untouched axes.
+
 The importer deliberately does not expose a `High` control. `Low` is the switch point/range-boundary control used by the Disting NT Poly Multisample workflow.
 
 The importer ignores common macOS archive junk such as `__MACOSX/`, `.DS_Store`, and AppleDouble `._*` files.

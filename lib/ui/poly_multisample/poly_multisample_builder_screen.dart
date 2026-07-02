@@ -939,7 +939,7 @@ class _DecentImportOptionsDialogState
                     );
                     _tagKeyRanges = _defaultTagKeyRanges(_selectedTagKeys);
                     _tagRoundRobins = _defaultTagRoundRobins(_selectedTagKeys);
-                    if (_mappingAppliesQuickValues) {
+                    if (_mappingAppliesQuickValues && !_manualDecentRowEdits) {
                       _applyDecentQuickMappingToState();
                     }
                   }),
@@ -992,7 +992,7 @@ class _DecentImportOptionsDialogState
                     _groupRoundRobins = _defaultGroupRoundRobins(
                       _selectedGroupKeys,
                     );
-                    if (_mappingAppliesQuickValues) {
+                    if (_mappingAppliesQuickValues && !_manualDecentRowEdits) {
                       _applyDecentQuickMappingToState();
                     }
                   }),
@@ -1045,24 +1045,49 @@ class _DecentImportOptionsDialogState
                           ? _selectedTagKeys.toList()
                           : const [],
                       groupVelocityLayers: _mappingShowsControls && _usingGroups
-                          ? _explicitGroupVelocityLayers()
+                          ? _explicitGroupVelocityLayers(
+                              includeAllSelected:
+                                  _decentQuickMapping !=
+                                  _DecentQuickMapping.keepXml,
+                            )
                           : const {},
                       groupKeyRanges: _mappingShowsControls && _usingGroups
-                          ? _explicitGroupKeyRanges()
+                          ? _explicitGroupKeyRanges(
+                              includeAllSelected:
+                                  _decentQuickMapping !=
+                                  _DecentQuickMapping.keepXml,
+                            )
                           : const {},
                       groupRoundRobins: _mappingShowsControls && _usingGroups
-                          ? _explicitGroupRoundRobins()
+                          ? _explicitGroupRoundRobins(
+                              includeAllSelected:
+                                  _decentQuickMapping !=
+                                  _DecentQuickMapping.keepXml,
+                            )
                           : const {},
                       tagVelocityLayers: _mappingShowsControls && _usingTags
-                          ? _explicitTagVelocityLayers()
+                          ? _explicitTagVelocityLayers(
+                              includeAllSelected:
+                                  _decentQuickMapping !=
+                                  _DecentQuickMapping.keepXml,
+                            )
                           : const {},
                       tagKeyRanges: _mappingShowsControls && _usingTags
-                          ? _explicitTagKeyRanges()
+                          ? _explicitTagKeyRanges(
+                              includeAllSelected:
+                                  _decentQuickMapping !=
+                                  _DecentQuickMapping.keepXml,
+                            )
                           : const {},
                       tagRoundRobins: _mappingShowsControls && _usingTags
-                          ? _explicitTagRoundRobins()
+                          ? _explicitTagRoundRobins(
+                              includeAllSelected:
+                                  _decentQuickMapping !=
+                                  _DecentQuickMapping.keepXml,
+                            )
                           : const {},
-                      preserveXmlMapping: true,
+                      preserveXmlMapping:
+                          _decentQuickMapping == _DecentQuickMapping.keepXml,
                       addUnmapped:
                           _decentQuickMapping == _DecentQuickMapping.unmapped,
                       includeSourceDocs: _includeSourceDocs,
@@ -1149,7 +1174,7 @@ class _DecentImportOptionsDialogState
       _syncTagVelocityLayers();
       _syncTagKeyRanges();
       _syncTagRoundRobins();
-      if (_mappingAppliesQuickValues) {
+      if (_mappingAppliesQuickValues && !_manualDecentRowEdits) {
         _applyDecentQuickMappingToState();
       }
     });
@@ -1170,7 +1195,7 @@ class _DecentImportOptionsDialogState
       _syncGroupVelocityLayers();
       _syncGroupKeyRanges();
       _syncGroupRoundRobins();
-      if (_mappingAppliesQuickValues) {
+      if (_mappingAppliesQuickValues && !_manualDecentRowEdits) {
         _applyDecentQuickMappingToState();
       }
     });
@@ -1347,14 +1372,18 @@ class _DecentImportOptionsDialogState
   void _setDecentMapRootMidi(int value) {
     setState(() {
       _decentMapRootMidi = value.clamp(0, 127).toInt();
-      _applyDecentQuickMappingToState();
+      if (!_manualDecentRowEdits) {
+        _applyDecentQuickMappingToState();
+      }
     });
   }
 
   void _setDecentMapVelocityLayer(int value) {
     setState(() {
       _decentMapVelocityLayer = value.clamp(1, 32).toInt();
-      _applyDecentQuickMappingToState();
+      if (!_manualDecentRowEdits) {
+        _applyDecentQuickMappingToState();
+      }
     });
   }
 
@@ -1902,56 +1931,69 @@ class _DecentImportOptionsDialogState
     return layers;
   }
 
-  Map<String, int> _explicitTagVelocityLayers() {
+  Map<String, int> _explicitTagVelocityLayers({
+    bool includeAllSelected = false,
+  }) {
     return {
       for (final entry in _tagVelocityLayers.entries)
         if (_selectedTagKeys.contains(entry.key) &&
-            _editedTagVelocityKeys.contains(entry.key))
+            (includeAllSelected || _editedTagVelocityKeys.contains(entry.key)))
           entry.key: entry.value,
     };
   }
 
-  Map<String, int> _explicitTagRoundRobins() {
+  Map<String, int> _explicitTagRoundRobins({bool includeAllSelected = false}) {
     return {
       for (final entry in _tagRoundRobins.entries)
         if (_selectedTagKeys.contains(entry.key) &&
-            _editedTagRoundRobinKeys.contains(entry.key))
+            (includeAllSelected ||
+                _editedTagRoundRobinKeys.contains(entry.key)))
           entry.key: entry.value,
     };
   }
 
-  Map<String, DecentSamplerTagKeyRange> _explicitTagKeyRanges() {
+  Map<String, DecentSamplerTagKeyRange> _explicitTagKeyRanges({
+    bool includeAllSelected = false,
+  }) {
     return {
       for (final entry in _tagKeyRanges.entries)
         if (_selectedTagKeys.contains(entry.key) &&
-            _editedTagRangeKeys.contains(entry.key))
+            (includeAllSelected || _editedTagRangeKeys.contains(entry.key)))
           entry.key: entry.value,
     };
   }
 
-  Map<String, int> _explicitGroupVelocityLayers() {
+  Map<String, int> _explicitGroupVelocityLayers({
+    bool includeAllSelected = false,
+  }) {
     return {
       for (final entry in _groupVelocityLayers.entries)
         if (_selectedGroupKeys.contains(entry.key) &&
-            _editedGroupVelocityKeys.contains(entry.key))
+            (includeAllSelected ||
+                _editedGroupVelocityKeys.contains(entry.key)))
           entry.key: entry.value,
     };
   }
 
-  Map<String, int> _explicitGroupRoundRobins() {
+  Map<String, int> _explicitGroupRoundRobins({
+    bool includeAllSelected = false,
+  }) {
     return {
       for (final entry in _groupRoundRobins.entries)
         if (_selectedGroupKeys.contains(entry.key) &&
-            _editedGroupRoundRobinKeys.contains(entry.key))
+            (includeAllSelected ||
+                _editedGroupRoundRobinKeys.contains(entry.key)))
           entry.key: entry.value,
     };
   }
 
-  Map<String, DecentSamplerTagKeyRange> _explicitGroupKeyRanges() {
+  Map<String, DecentSamplerTagKeyRange> _explicitGroupKeyRanges({
+    bool includeAllSelected = false,
+  }) {
     return {
       for (final entry in _groupKeyRanges.entries)
         if (_selectedGroupKeys.contains(entry.key) &&
-            _editedGroupRangeKeys.contains(entry.key))
+            (includeAllSelected || _editedGroupRangeKeys.contains(entry.key)))
           entry.key: entry.value,
     };
   }
@@ -2260,9 +2302,84 @@ class _DecentRowEditModeButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return OutlinedButton.icon(
+      style: OutlinedButton.styleFrom(
+        minimumSize: const Size(0, 40),
+        padding: const EdgeInsets.symmetric(horizontal: 18),
+      ),
       onPressed: onPressed,
       icon: Icon(manualEdits ? Icons.edit_note : Icons.auto_fix_high, size: 18),
       label: Text(manualEdits ? 'Manual edits' : 'Smart edits'),
+    );
+  }
+}
+
+class _DecentChoiceListHeader extends StatelessWidget {
+  const _DecentChoiceListHeader({
+    required this.label,
+    required this.selectedCount,
+    required this.totalCount,
+    required this.manualEdits,
+    required this.onToggleEditMode,
+    required this.onSelectAll,
+    required this.onClear,
+  });
+
+  final String label;
+  final int selectedCount;
+  final int totalCount;
+  final bool manualEdits;
+  final VoidCallback onToggleEditMode;
+  final VoidCallback onSelectAll;
+  final VoidCallback onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return SizedBox(
+      height: 44,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Expanded(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.baseline,
+              textBaseline: TextBaseline.alphabetic,
+              children: [
+                Text(label, style: theme.textTheme.titleSmall),
+                const SizedBox(width: 8),
+                Text(
+                  '$selectedCount/$totalCount selected',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          _DecentRowEditModeButton(
+            manualEdits: manualEdits,
+            onPressed: onToggleEditMode,
+          ),
+          const SizedBox(width: 14),
+          TextButton(
+            style: TextButton.styleFrom(
+              minimumSize: const Size(0, 40),
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+            ),
+            onPressed: onSelectAll,
+            child: const Text('Select all'),
+          ),
+          const SizedBox(width: 4),
+          TextButton(
+            style: TextButton.styleFrom(
+              minimumSize: const Size(0, 40),
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+            ),
+            onPressed: onClear,
+            child: const Text('Clear'),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -2326,27 +2443,15 @@ class _TagSelectionPanel extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            Text('Tags', style: theme.textTheme.titleSmall),
-            const SizedBox(width: 8),
-            Text(
-              '$selectedCount/${tags.length} selected',
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            ),
-            const Spacer(),
-            _DecentRowEditModeButton(
-              manualEdits: manualEdits,
-              onPressed: onToggleEditMode,
-            ),
-            const SizedBox(width: 8),
-            TextButton(onPressed: onSelectAll, child: const Text('Select all')),
-            TextButton(onPressed: onClear, child: const Text('Clear')),
-          ],
+        _DecentChoiceListHeader(
+          label: 'Tags',
+          selectedCount: selectedCount,
+          totalCount: tags.length,
+          manualEdits: manualEdits,
+          onToggleEditMode: onToggleEditMode,
+          onSelectAll: onSelectAll,
+          onClear: onClear,
         ),
-        const SizedBox(height: 2),
         Text(
           manualEdits
               ? 'Manual edits leave rows where you put them. Fix any overlap before continuing.'
@@ -2485,27 +2590,15 @@ class _GroupMappingPanel extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            Text('Groups', style: theme.textTheme.titleSmall),
-            const SizedBox(width: 8),
-            Text(
-              '$selectedCount/${groups.length} selected',
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            ),
-            const Spacer(),
-            _DecentRowEditModeButton(
-              manualEdits: manualEdits,
-              onPressed: onToggleEditMode,
-            ),
-            const SizedBox(width: 8),
-            TextButton(onPressed: onSelectAll, child: const Text('Select all')),
-            TextButton(onPressed: onClear, child: const Text('Clear')),
-          ],
+        _DecentChoiceListHeader(
+          label: 'Groups',
+          selectedCount: selectedCount,
+          totalCount: groups.length,
+          manualEdits: manualEdits,
+          onToggleEditMode: onToggleEditMode,
+          onSelectAll: onSelectAll,
+          onClear: onClear,
         ),
-        const SizedBox(height: 2),
         Text(
           manualEdits
               ? 'Manual edits leave rows where you put them. Fix any overlap before continuing.'

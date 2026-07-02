@@ -182,6 +182,8 @@ Rows have two edit behaviours:
 
 `Use Decent map` defaults to Manual edits because Decent XML can contain nested velocity ranges, RR slots, UI layers, and controls that may not fit Disting directly. The other mapping modes default back to Smart edits because they are deliberate simplification/seed actions.
 
+Manual edits means no automatic repair, reseeding, swapping, shifting, or pruning. Selecting rows, changing the row controls, or touching the top seed controls must not move existing manual rows. The only guardrail in Manual edits is the overlap warning plus disabled Continue.
+
 Keep the Manual warning line reserved in the layout so overlap messages do not make the tag/group list jump while editing.
 
 ## Disting NT Constraint
@@ -197,6 +199,8 @@ So Decent import must turn selected material into one static folder through one 
 - **Velocity layers**: assign selected tags/groups to `Vel 1`, `Vel 2`, etc. in row order.
 - **Round robins**: assign selected tags/groups to `RR1`, `RR2`, etc. in row order.
 - **Add unmapped**: add the selected source samples to the editor for manual mapping.
+
+Only `Use Decent map` should keep `preserveXmlMapping` true. Chromatic, Velocity layers, Round robins, and Add unmapped must export the full visible row mapping (`Low`, `Root`, `Vel`, `RR`) so the resulting staged folder matches what the user saw and edited.
 
 Round robins mode must not export stale velocity overrides. If the original XML has real velocity ranges, preserving those is fine; the RR quick action itself must not create velocity layers.
 
@@ -260,7 +264,7 @@ The analyzer now exposes XML mapping summaries on both groups and tags:
 
 Do not invent velocity layers for mic positions, tape/tone variants, reverb, room/close, DI/amp, or arbitrary tags. Only explicit Velocity layers mode should force row velocity numbers. Use Decent map may preserve real XML velocity ranges when they exist.
 
-Switching mapping modes should reset row overrides back to Decent/default values before applying the new quick mapping. This prevents stale values such as V1/V2/V3 remaining after switching to RR mode.
+Switching mapping modes should reset row overrides back to Decent/default values before applying the new quick mapping. This prevents stale values such as V1/V2/V3 remaining after switching to RR mode. Once the user switches to Manual edits inside a mode, do not keep reseeding the rows.
 
 Smart/manual editing is not a mapping mode. It only controls whether the UI repairs conflicts immediately or lets the user build a complex mapping manually and blocks Continue until conflicts are resolved.
 
@@ -356,8 +360,10 @@ Latest focused verification before this handoff update:
 - Hiding row-level `Low`, `Root`, `Vel`, and `RR` controls.
 - Adding a `High` control to the import UI.
 - Letting Manual edits continue with overlapping selected note/range + velocity + RR lanes.
+- Letting Manual edits shift, reseed, swap, or prune rows after the user has taken manual control.
 - Letting Smart edits turn into an unmanageable jigsaw for complex maps; users must be able to switch to Manual edits.
 - Letting a quick mapping mode leave stale overrides from the previous mode.
+- Letting Chromatic/Velocity/RR/Add unmapped export partial overrides that fall back to Decent XML instead of the visible row map.
 - Losing preview and per-row mapping in the loose WAV flow.
 - Matching tags by loose substrings instead of structured tag keys.
 
@@ -370,8 +376,10 @@ This fork is in a clean state when:
 - Tags/Groups appear only where useful
 - mapping modes seed simple row values
 - Smart edits and Manual edits are available on Decent tag/group rows
+- Smart edits can repair conflicts, but Manual edits never shifts rows and only warns/blocks
 - Manual edits reserve warning space and block Continue on overlaps
 - rows remain editable through `Low`, `Root`, `Vel`, and `RR`
+- non-XML mapping modes export the full visible row map, not partial edited axes
 - RR mode does not export stale velocity overrides
 - Use Decent map preserves compatible XML mapping
 - Add unmapped lets the user finish mapping in the editor
