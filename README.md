@@ -10,13 +10,6 @@ Latest v10 changes:
 - Use Decent map shows XML-derived rows and warns where Decent behavior does not map cleanly to Disting.
 - Loose WAV import keeps the row-based preview and per-row Root, Low, Vel, and RR controls.
 
-Current release:
-
-- Branch: `nymph-next-fix`
-- Release: [`poly-multisample-builder-test-v10`](https://github.com/nymphnerds/nt_helper/releases/tag/poly-multisample-builder-test-v10)
-- Windows zip: `nt_helper-windows-poly-multisample-builder-test-v10.zip`
-- SHA256: `a706d91a8f61d451f0c5cfa90543778e916db865af3df31d0bc24307762575d5`
-
 Fork chronology:
 
 ### 2026-07-02 v10
