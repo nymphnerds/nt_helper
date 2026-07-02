@@ -27,6 +27,17 @@ Fork chronology:
 - Use Decent map keeps XML-derived rows visible and editable.
 - Decent tag/group header actions and warning spacing were tightened.
 
+### 2026-07-02 Decent Manual Edit Mode
+
+- Adds a `Smart edits` / `Manual edits` toggle to Decent tag/group mapping rows.
+- `Smart edits` keeps the existing guardrails: selecting or editing rows shifts/conflicts away where possible so the Disting map stays valid.
+- `Manual edits` leaves rows exactly where the user puts them, shows an overlap warning, and disables `Continue` until the selected rows no longer collide on note range, velocity layer, and RR lane.
+- `Use Decent map` defaults to Manual edits and shows XML-derived summaries such as roots, velocity ranges, and RR slots until a row is explicitly overridden.
+- Chromatic, Velocity layers, Round robins, and Add unmapped default back to Smart edits because those modes intentionally simplify the selection.
+- In Manual edits, no quick mapping reseed or shifting occurs when selecting rows or changing seed controls; the UI only warns and blocks impossible overlaps.
+- In Chromatic, Velocity layers, Round robins, and Add unmapped, the importer exports the full visible Low/Root/Vel/RR row map instead of falling back to Decent XML for untouched axes.
+- Keeps Decent row controls compact: warning space is reserved to prevent layout jumps, Chromatic `Root start` + `Vel` controls stay on the same line, and the Smart/Manual + Select all + Clear header is aligned consistently.
+
 ### 2026-07-01 Decent Import Cleanup
 
 - Decent tag/group rows describe actual XML/sample structure instead of guessed roles from names like Dry, Tape, raw, mic, or noise.
@@ -34,6 +45,37 @@ Fork chronology:
 - Decent imports keep one preset per staged folder, then use Tags or Groups plus a mapping mode.
 - Mapping modes are Use Decent map, Chromatic, Velocity layers, Round robins, and Add unmapped.
 - The loose WAV picker keeps preview plus per-row Root, Low, Vel, and RR controls.
+
+### 2026-07-01 Structural Decent Tag Logic
+
+- Decent tag/group rows now describe the actual sample structure found in the XML, not a guessed role from names like `Dry`, `Tape`, `raw`, `mic`, or `noise`.
+- Keeps every real tag/group visible when it points at samples; the user decides by previewing and selecting material.
+- Shows structure such as `1 fixed-pitch sample across G2-A2`, `3 pitched samples, one per key, G2-A2`, velocity-range counts, and RR slot counts.
+- Keeps `Use Decent map` row controls editable while preventing impossible same-slot selections unless the user changes Low/Root/Vel/RR to make the rows distinct.
+- Removes fragile keyword-based tag selection/filtering from the Decent chooser; names are labels, structure is evidence.
+- Adds regression coverage for fixed-pitch bed tags, structure-based tag summaries, tag preview sources, tag velocity overrides, and RR-only tag mapping.
+
+### 2026-07-01 Import Workflow Cleanup
+
+- Unifies the builder around one `Import` entry point that stages a single editable Disting NT Poly Multisample folder.
+- Keeps the loose WAV picker as a row-based workflow with preview plus per-row `Root`, `Low`, `Vel`, and `RR` controls.
+- Adds quick loose-WAV seeding for Chromatic, Round robins, and Velocity layers while preserving row-level edits before adding.
+- Makes Decent Sampler sources always open the strategy/options screen after analysis, even when the XML looks simple.
+- Keeps Decent preset selection to one preset per staged folder, matching the one-folder Poly Multisample workflow.
+- Lets Decent imports choose Tags or Groups where useful, then choose `Use Decent map`, `Chromatic`, `Velocity layers`, `Round robins`, or `Add unmapped`.
+- Shows Decent XML-derived tag/group mapping summaries in the rows and tooltips, including note range, velocity range, RR/seqPosition, fixed-pitch beds, and Decent-only layer/control warnings.
+- Adds preview buttons to Decent tag/group rows.
+- Keeps `Use Decent map` honest: compatible XML Low/Root/Vel/RR/loop data is preserved, while tooltips show where Decent layer/control behaviour cannot be reproduced directly on Disting.
+- Improves auto-preview and keyboard-map focus after import without clamping the available MIDI range.
+- Adds regression coverage for tag XML summaries, structure-based tag summaries, preview-source paths, forced tag RR behaviour, and Decent RR/velocity interactions.
+
+### 2026-07-01 Manual Decent Material Selection
+
+- Decent tag/group choices now start unchecked.
+- Removes default-selected tag heuristics and suggestion wording from the Decent import dialog.
+- Keeps the useful Decent XML facts: sample counts, preview, Low/Root/Vel/RR defaults, velocity/RR summaries, and Decent-only control warnings.
+- Keeps `Select all` and `Clear`, but the user explicitly chooses which tags or groups enter the staged folder.
+- Removes the old role/keyword-driven tag chooser behaviour; tag names are labels, and sample structure is the evidence.
 
 ### 2026-07-01 Upstream Syncs
 
@@ -43,6 +85,149 @@ Fork chronology:
 - Merged developer `upstream/main` again at `30c5aef2`, bringing in v2.42.3+281 and the Windows CI VC++ runtime bundling update.
 - Merged developer `upstream/main` again at `0077f24b`, bringing in v2.42.5+283, the Windows Inno Setup installer workflow, and USB video capture threading hardening.
 - Merged developer `upstream/main` again at `95085858`, bringing in v2.42.7+285, the Windows installer VC++ redistributable prompt, and the updated CI packaging approach.
+
+### 2026-06-29 Custom Import Mapping Polish
+
+- Keeps the sample-management toolbar consistent across local, NT SD, and custom-draft sample workspaces.
+- Makes `Add files`, `Add folder`, and `Remove` available outside custom drafts; existing folders can now stage additions/removals and apply them like rename edits.
+- Keeps `Custom` as the empty/mashup draft entry point, while still allowing the same file-management tools after opening an existing sample folder.
+- Updates custom/import wording so it is clear that loose WAVs, folders, and selected WAVs/groups from Decent `.dslibrary`, `.zip`, `.dspreset`, or extracted folders can be collected into one Disting NT multisample folder.
+- Adds a compact WAV-selection mapping choice before staging selected files:
+  - `Use source / filename mapping` uses Decent XML first and falls back to C3/_V2/_RR3-style filename tags;
+  - `Add unmapped` keeps files unassigned for manual mapping;
+  - `Spread across keys` maps selected files one-per-key from a chosen start note;
+  - `Stack as round robins` maps selected files onto one root/low note and velocity layer as RR1, RR2, RR3, etc.
+- Adds preview/audition controls to the WAV selection dialog so loose WAVs and selected Decent-source WAVs can be heard before staging them.
+- Removes the old GM drum auto-guessing path from this picker to keep loose-WAV imports predictable.
+- Keeps Decent group selection and individual WAV selection available without extracting the whole `.dslibrary`/`.zip` first.
+
+### 2026-06-29 Layout Fix
+
+- Restores Thorinside's original `Parameters` + `Routing` multi-toggle behavior.
+- Keeps `Samples` as an alternate workspace like `Routing`, rather than a third exclusive full-page mode.
+- Allows `Parameters + Samples` on wide layouts, matching the way `Parameters + Routing` can be shown together.
+- Uses the remaining main-panel width when the chat panel is open, so the layout falls back predictably instead of getting stuck or sluggish.
+- Keeps the Poly Multisample Builder workspace cached, so switching away and back preserves the current sample folder/loadout.
+
+### 2026-06-29 Custom Mode Cleanup
+
+- Adds a Custom multisample draft workflow for building mashup folders from loose WAVs, source folders, and selected Decent Sampler groups/files.
+- Custom mode copies sources on save; it does not modify the original library files.
+- Decent sources can be added from `.dslibrary`, `.zip`, `.dspreset`, or extracted folders.
+- Decent group selection now works at group level and individual WAV level, so whole layers/articulations/round-robin groups can be staged without extracting the entire archive first.
+- Custom draft rows support multi-select removal, including shift-range and ctrl/cmd-toggle selection.
+- Remembers picker locations separately for local sample folders, Decent import source, Decent import output, custom source, custom output, and WAV save-as/export.
+- Keeps direct NT SD waveform/audio download disabled; local or mounted folders remain the supported path for waveform preview, audio preview, loop metadata edits, and destructive WAV edits.
+- Keeps chat/PDF attachment handling aligned with upstream `main`; this branch does not carry a separate fork-specific chat file-limit implementation.
+
+### 2026-06-28 Import Report Polish
+
+- Pulled in upstream `main` so this branch uses Thorinside's current chat/PDF attachment and local-file workspace behavior.
+- Leaves the upstream chat file limits unchanged: PDFs up to 20 MB, general reads up to 5 MB, search file scans up to 20 MB, and extracted PDF context capped at 120,000 characters.
+- Extends the keyboard map down to the Disting/MIDI lower range instead of starting at C1.
+- Makes the Decent import strategy dialog easier to read:
+  - shows a compact summary first: group count, sample count, labelled layers, round robins, velocity ranges, and controller bindings;
+  - keeps the long per-group data inside a collapsed detailed report;
+  - labels detailed rows as `Group N` plus the XML-derived name/tag when available;
+  - avoids pretending every Decent group is just a velocity layer when the XML suggests articulations, mic layers, switches, or controller-driven options.
+
+### 2026-06-28 Update
+
+- Added a first Decent Sampler import path from the `Samples` workspace.
+- Accepts `.dspreset`, `.dslibrary`, and `.zip` sources.
+- Reads `.dslibrary`/`.zip` directly without requiring manual unpacking.
+- Also accepts already extracted Decent Sampler folders.
+- Remembers picker locations separately: local sample folder, Decent import source, Decent import output, and WAV export/save-as folder.
+- Can optionally copy likely source license/readme/manual/info/artwork files into `_source_docs` alongside each converted output folder.
+- Exports Disting NT-ready WAV folders using filename tags for root note, switch/low note, velocity layer, and round robin.
+- Copies Decent `loopStart`/`loopEnd` into WAV `smpl` metadata where possible.
+- Writes `_CONVERSION_REPORT.md` into each converted output folder.
+- Keeps the converter WAV-only for now, matching the Disting NT manual. Non-WAV source audio is reported instead of silently converted.
+- Uses a tolerant Decent parser: it only needs sample paths, root notes, velocity ranges, round-robin positions, and loop points, and ignores unrelated/messy XML where possible.
+- Adds a Decent import strategy dialog for libraries whose groups overlap or cannot be mapped unambiguously.
+- The strategy report is evidence-based rather than name-based:
+  - real velocity splits are detected from `loVel`/`hiVel`;
+  - round robins are detected from `seqPosition` and RR-style group/file labels;
+  - controller/macro layers are detected from Decent `binding level="group"` entries;
+  - group volume bindings such as `AMP_VOLUME` are reported as controller fades/mixes rather than assumed velocity layers;
+  - group enable bindings such as `ENABLED` are reported as switches/articulations/options;
+  - drum/category groups are shown from their group labels instead of being forced into velocity layers.
+- Import choices now stay neutral: convert groups as velocity layers, split groups/layers/articulations into separate Disting folders, convert one selected group, or keep the default parser mapping.
+- Pure round-robin groups are kept as round robins and are not promoted to fake velocity/bank layers.
+- Duplicate requested RR slots are repaired by assigning the next free RR number and reporting the decision.
+- Smoke-tested successfully with a real Decent Sampler library in the Windows test build.
+
+### 2026-06-27 Test Release
+
+### What It Adds
+
+- Adds a `Samples` workspace for Disting NT Poly Multisample sample folders.
+- Opens local/mounted sample folders, including mounted Disting NT SD cards.
+- Opens direct Disting NT `/samples` folders for browsing and filename/tag edits.
+- Parses Disting-style WAV filename tags:
+  - root note;
+  - low/switch note;
+  - velocity layer;
+  - round robin number.
+- Shows a read-only keyboard map for roots, ranges, velocity layers, and round robin groups.
+- Lets the sample list manually edit `Root`, `Low`, `High`, `Vel`, and `RR`.
+- Applies filename/tag edits by renaming WAV files.
+- Keeps mapping edits as a draft until the main `Apply` button is used.
+
+### Local/Mounted WAV Features
+
+These work when the sample folder is available as a normal local path.
+
+- Draws waveform previews.
+- Reads and saves WAV `smpl` loop metadata.
+- Plays local WAV previews.
+- Auditions loop points continuously while editing.
+- Adds Destructive mode for local WAV edits:
+  - trim start/end;
+  - fade in/out;
+  - independent fade curves;
+  - gain;
+  - normalize;
+  - `Save`;
+  - `Save as`.
+
+Destructive trim is exact-frame. Zero-crossing snapping is only done when explicitly using the `Zero` controls.
+
+### Direct Disting NT SD Limits
+
+Direct SD access over MIDI/SysEx can currently list folders/files and rename files, but waveform/audio work is disabled.
+
+The current file download path appears to return whole files in one nibble-encoded SysEx response. That is not practical for automatic WAV waveform display, loop metadata inspection, or audio preview.
+
+Useful future firmware/API support would be:
+
+- ranged file reads, e.g. `read_file(path, offset, length)`;
+- WAV metadata summary reads;
+- WAV `smpl` loop metadata write/patch support;
+- optional waveform peak summaries.
+
+Until then, waveform, playback, loop editing, and destructive WAV editing are local/mounted-folder features only.
+
+### Fixes Included
+
+- Manual root edits now clear stale `No root` warnings.
+- Destructive trim no longer secretly snaps to zero-crossings while dragging/sliding.
+- Fade preview and rendered fade timing are aligned more closely.
+- Keyboard-map selection and list selection stay linked for the tested sample sets.
+
+### Validation
+
+- `flutter analyze` passed for the touched sample-builder and WAV files.
+- Parser tests passed.
+- WAV metadata/render tests passed.
+- Windows release build completed successfully.
+
+### Still Experimental
+
+- Complex velocity/round-robin libraries need more real-world testing.
+- Drag/drop import and drag-to-key assignment are not implemented yet.
+- Decent Sampler import is an MVP and currently converts WAV sources only. AIFF/FLAC/OGG conversion is not implemented yet.
+- Direct Disting NT SD waveform/audio editing needs better file access from the device.
 
 ---
 
