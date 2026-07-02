@@ -2968,6 +2968,7 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
   String? _lastCustomSourceFolder;
   Set<String> _selectedPaths = {};
   int? _lastListSelectedIndex;
+  int? _mapFocusMidiOverride;
 
   @override
   void initState() {
@@ -3080,6 +3081,7 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
     _mapMinMidi = _initialMapMinMidi(_regions);
     _mapMaxMidi = _initialMapMaxMidi(_regions, _mapMinMidi);
     _mapRevision = 0;
+    _mapFocusMidiOverride = null;
     _selectedPath =
         widget.selectedRegion?.path ??
         (_regions.isEmpty ? null : _regions.first.path);
@@ -3115,6 +3117,7 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
       _lastListSelectedIndex = _regions.indexWhere(
         (candidate) => candidate.path == region.path,
       );
+      _mapFocusMidiOverride = null;
     });
     widget.onSelectRegion(region);
     if (_autoPreviewOnSelect && !_isNtSdPath(region.path)) {
@@ -3147,6 +3150,7 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
         _selectedPaths = {region.path};
         _lastListSelectedIndex = index < 0 ? null : index;
       }
+      _mapFocusMidiOverride = null;
     });
     widget.onSelectRegion(region);
     if (_autoPreviewOnSelect && !_isNtSdPath(region.path)) {
@@ -3164,6 +3168,7 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
       _ensureMapLanes();
       _mapRevision++;
       _selectedPath = updated.path;
+      _mapFocusMidiOverride = _focusMidiForRegion(updated);
     });
     final selected = _selectedRegion;
     if (selected != null) {
@@ -3259,6 +3264,7 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
       _mapMinMidi = _initialMapMinMidi(_regions);
       _mapMaxMidi = _initialMapMaxMidi(_regions, _mapMinMidi);
       _mapRevision++;
+      _mapFocusMidiOverride = _focusMidiForRegion(additions.first);
       _selectedPath = additions.first.path;
       _selectedPaths = {additions.first.path};
       _lastListSelectedIndex = _regions.indexWhere(
@@ -3326,11 +3332,13 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
         _selectedPath = null;
         _selectedPaths = {};
         _lastListSelectedIndex = null;
+        _mapFocusMidiOverride = null;
       } else {
         final nextIndex = firstIndex.clamp(0, _regions.length - 1).toInt();
         _selectedPath = _regions[nextIndex].path;
         _selectedPaths = {_selectedPath!};
         _lastListSelectedIndex = nextIndex;
+        _mapFocusMidiOverride = _focusMidiForRegion(_regions[nextIndex]);
       }
     });
     final selected = _selectedRegion;
@@ -3645,6 +3653,7 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
           _mapMinMidi = _initialMapMinMidi(_regions);
           _mapMaxMidi = _initialMapMaxMidi(_regions, _mapMinMidi);
           _mapRevision++;
+          _mapFocusMidiOverride = _focusMidiForRegion(newRegion);
           _selectedPath = newRegion.path;
           if (refreshed != null) {
             _waveformCache[newRegion.path] = refreshed;
@@ -3902,6 +3911,7 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
       }
       _mapRevision++;
       _selectedPath = region.path;
+      _mapFocusMidiOverride = updated.rootMidi;
     });
     final selected = _selectedRegion;
     if (selected != null) {
@@ -3922,6 +3932,7 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
       _ensureMapLanes();
       _mapRevision++;
       _selectedPath = region.path;
+      _mapFocusMidiOverride = _focusMidiForRegion(region);
     });
     final selected = _selectedRegion;
     if (selected != null) {
@@ -3949,6 +3960,7 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
       }
       _mapRevision++;
       _selectedPath = region.path;
+      _mapFocusMidiOverride = nextLow;
     });
     final selected = _selectedRegion;
     if (selected != null) {
@@ -3980,6 +3992,7 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
       }
       _mapRevision++;
       _selectedPath = region.path;
+      _mapFocusMidiOverride = nextLow - 1;
     });
     final selected = _selectedRegion;
     if (selected != null) {
@@ -4090,6 +4103,7 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
         _baselineRegions = List<PolySampleRegion>.of(updatedRegions);
         _mapLanes = _sortedSampleLanes(_regions);
         _mapRevision++;
+        _mapFocusMidiOverride = null;
         _selectedPath =
             selectedPath == null || !currentPaths.contains(selectedPath)
             ? (_regions.isEmpty ? null : _regions.first.path)
@@ -4135,6 +4149,8 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
     final colorScheme = theme.colorScheme;
     final selected = _selectedRegion;
     final instrument = widget.instrument.copyWith(regions: _regions);
+    final keyMapFocusMidi =
+        _mapFocusMidiOverride ?? _focusMidiForRegion(selected);
 
     return Column(
       children: [
@@ -4268,7 +4284,7 @@ class _InstrumentEditorState extends State<_InstrumentEditor> {
                         lanes: _mapLanes,
                         minMidi: _mapMinMidi,
                         maxMidi: _mapMaxMidi,
-                        focusMidi: _firstMappedMidi(_regions),
+                        focusMidi: keyMapFocusMidi,
                         mapRevision: _mapRevision,
                         onSelectRegion: _selectRegion,
                       ),
@@ -6914,14 +6930,9 @@ int _initialMapMaxMidi(List<PolySampleRegion> regions, int minMidi) {
   return 128;
 }
 
-int? _firstMappedMidi(List<PolySampleRegion> regions) {
-  final starts = regions
-      .map((region) => _effectiveLow(region) ?? region.rootMidi)
-      .whereType<int>()
-      .toList();
-  if (starts.isEmpty) return null;
-  starts.sort();
-  return starts.first.clamp(0, 127).toInt();
+int? _focusMidiForRegion(PolySampleRegion? region) {
+  final midi = region == null ? null : _effectiveLow(region) ?? region.rootMidi;
+  return midi?.clamp(0, 127).toInt();
 }
 
 PolySampleRegion _updateRoot(PolySampleRegion region, int midi) {
