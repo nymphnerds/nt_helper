@@ -22,16 +22,26 @@ The top-level builder now has one Import path. It accepts:
 
 The flow branches internally by source type. Do not bring back a separate top-level Custom button for the same job.
 
-## Current Release
+## Where The Fork Is Now
 
 - Branch: `nymph-next-fix`
-- Release: <https://github.com/nymphnerds/nt_helper/releases/tag/poly-multisample-builder-test-v10>
-- Windows zip: `nt_helper-windows-poly-multisample-builder-test-v10.zip`
-- SHA256: `a706d91a8f61d451f0c5cfa90543778e916db865af3df31d0bc24307762575d5`
+- Current release tag: `poly-multisample-builder-test-v10`
+- Latest pushed branch commit before this handoff repair: `af1b8105`
+- The fork is a Windows-focused Poly Multisample Builder test branch on top of the current developer `upstream/main` syncs.
+- The main fork payload is the Import/Samples workspace: loose WAV row import, Decent Sampler analysis/import, staged Poly Multisample folders, WAV metadata/loop handling, and local/mounted sample-folder editing.
+- The README is only a public branch summary. This handoff is the developer-facing source of truth for implementation state, risks, and gotchas.
 
-## Developer Main Baseline
+## Compared With Developer Main
 
-The fork is based on repeated merges from developer `upstream/main`. Keep this history below the current fork notes so the newest work stays visible first.
+Comparison baseline:
+
+```text
+upstream/main = thorinside/nt_helper main
+fork branch   = nymph-next-fix
+fetched       = 2026-07-02
+```
+
+Branch status after the six upstream merges and Decent structural-tag pass:
 
 - First upstream sync: `28419624 Merge remote-tracking branch 'upstream/main' into nymph-next-fix`.
 - Second upstream sync: `02d08a66 Merge remote-tracking branch 'upstream/main' into nymph-next-fix`.
@@ -39,12 +49,67 @@ The fork is based on repeated merges from developer `upstream/main`. Keep this h
 - Fourth upstream sync: `30c5aef2 Merge remote-tracking branch 'upstream/main' into nymph-next-fix`.
 - Fifth upstream sync: `0077f24b Merge remote-tracking branch 'upstream/main' into nymph-next-fix`.
 - Sixth upstream sync: `95085858 Merge remote-tracking branch 'upstream/main' into nymph-next-fix`.
+- Current fork work sits on top of all six syncs and includes the structural Decent tag/import cleanup.
 
-Those syncs brought the fork up to the current developer-main baseline before the latest Poly Multisample Builder work.
+First upstream sync brought in:
 
-## Main Fork Payload
+```text
+118498c3 Bump version to 2.42.0+278
+c9a138d3 chore(video): gate popup diagnostics to debug builds
+c24dd66e fix(video): avoid reclaiming focus from Windows popup
+c90b68f0 fix(video): keep popup activation on top-level HWND
+14b8a9b4 fix(video): avoid hidden popup focus activation
+f6d9d49a fix(video): avoid stealing focus from Windows popup
+aa7e5474 chore(video): log Windows popup focus diagnostics
+b2d8a6a5 fix(video): replace Windows popup backend
+81d18f5d fix(video): hide Linux popup on close
+5aefedf0 fix(video): keep Linux popup close local
+076277f7 ci: update flutter version
+bb736ce1 build: upgrade flutter midi command
+42882f45 feat(video): add opt-in floating popup window
+```
 
-The fork payload is concentrated in:
+Second upstream sync brought in:
+
+```text
+d1b137b0 Bump version to 2.42.1+279
+5521c736 fix(midi): preserve Windows MIDI discovery after disconnect
+```
+
+Third upstream sync brought in:
+
+```text
+0588394c Bump version to 2.42.2+280
+494a8b60 fix(update): harden Windows updater install script
+4fd32d79 fix(update): require platform asset before announcing release
+```
+
+Fourth upstream sync brought in:
+
+```text
+c12d9b46 Bump version to 2.42.3+281
+ea230004 ci(windows): bundle Visual C++ runtime DLLs
+```
+
+Fifth upstream sync brought in:
+
+```text
+662c2199 Bump version to 2.42.5+283
+fed33a75 fix(windows): harden USB video capture threading
+fc2dea2d Bump version to 2.42.4+282
+c88dcca8 feat(windows): publish Inno Setup installer
+```
+
+Sixth upstream sync brought in:
+
+```text
+6e102922 Bump version to 2.42.7+285
+5073ac98 build(windows): offer VC++ redist when missing
+7f3c0967 Bump version to 2.42.6+284
+94ec542e ci(windows): stop bundling VC++ runtime DLLs
+```
+
+Committed fork payload versus the fork point includes:
 
 - `lib/poly_multisample/decent_sampler_converter.dart`
 - `lib/poly_multisample/poly_multisample_models.dart`
@@ -57,6 +122,16 @@ The fork payload is concentrated in:
 - `docs/POLYSAMPLER_BUILDER_FORK.md`
 - `docs/WINDOWS_FLUTTER_WORKFLOW.md`
 - README/pubspec/supporting builder integration changes
+
+Current fork work in this handoff:
+
+- `lib/poly_multisample/decent_sampler_converter.dart`
+- `lib/ui/poly_multisample/poly_multisample_builder_screen.dart`
+- `test/poly_multisample/decent_sampler_converter_test.dart`
+- `README.md`
+- `docs/NYMPHS_FORK_HANDOFF.md`
+
+Direct diff from current working tree to `upstream/main` is larger because it includes the fork feature work that is not in developer main.
 
 ## Loose WAV Import
 
@@ -116,8 +191,6 @@ Rows have two edit behaviours:
 
 `Use Decent map` defaults to Manual edits because Decent XML can contain nested velocity ranges, RR slots, UI layers, and controls that may not fit Disting directly. The other mapping modes default back to Smart edits because they are deliberate simplification/seed actions.
 
-Manual edits means no automatic repair, reseeding, swapping, shifting, or pruning. Selecting rows, changing the row controls, or touching the top seed controls must not move existing manual rows. The only guardrail in Manual edits is the overlap warning plus disabled Continue.
-
 Keep the Manual warning line reserved in the layout so overlap messages do not make the tag/group list jump while editing.
 
 ## Disting NT Constraint
@@ -133,8 +206,6 @@ So Decent import must turn selected material into one static folder through one 
 - **Velocity layers**: assign selected tags/groups to `Vel 1`, `Vel 2`, etc. in row order.
 - **Round robins**: assign selected tags/groups to `RR1`, `RR2`, etc. in row order.
 - **Add unmapped**: add the selected source samples to the editor for manual mapping.
-
-Only `Use Decent map` should keep `preserveXmlMapping` true. Chromatic, Velocity layers, Round robins, and Add unmapped must export the full visible row mapping (`Low`, `Root`, `Vel`, `RR`) so the resulting staged folder matches what the user saw and edited.
 
 Round robins mode must not export stale velocity overrides. If the original XML has real velocity ranges, preserving those is fine; the RR quick action itself must not create velocity layers.
 
@@ -198,7 +269,7 @@ The analyzer now exposes XML mapping summaries on both groups and tags:
 
 Do not invent velocity layers for mic positions, tape/tone variants, reverb, room/close, DI/amp, or arbitrary tags. Only explicit Velocity layers mode should force row velocity numbers. Use Decent map may preserve real XML velocity ranges when they exist.
 
-Switching mapping modes should reset row overrides back to Decent/default values before applying the new quick mapping. This prevents stale values such as V1/V2/V3 remaining after switching to RR mode. Once the user switches to Manual edits inside a mode, do not keep reseeding the rows.
+Switching mapping modes should reset row overrides back to Decent/default values before applying the new quick mapping. This prevents stale values such as V1/V2/V3 remaining after switching to RR mode.
 
 Smart/manual editing is not a mapping mode. It only controls whether the UI repairs conflicts immediately or lets the user build a complex mapping manually and blocks Continue until conflicts are resolved.
 
@@ -259,13 +330,30 @@ The focused Decent test file currently covers:
 - fixed-pitch bed tags from real XML (`pitchKeyTrack="0"`) staying visible
 - representative preview source paths for Decent tags/groups
 
-## Checks To Run
+## Verification Commands
+
+Run from the Windows build mirror:
+
+```text
+C:\Users\babyj\nt_helper_winbuild
+```
+
+Commands:
 
 ```bash
 dart format lib/poly_multisample/decent_sampler_converter.dart lib/ui/poly_multisample/poly_multisample_builder_screen.dart test/poly_multisample/decent_sampler_converter_test.dart
 flutter test test/poly_multisample/decent_sampler_converter_test.dart
 dart analyze lib/poly_multisample/decent_sampler_converter.dart lib/ui/poly_multisample/poly_multisample_builder_screen.dart test/poly_multisample/decent_sampler_converter_test.dart
+flutter build windows --release
 ```
+
+Latest focused verification before this handoff update:
+
+- `dart analyze` on app release/update, Decent converter, Poly Multisample UI, update dialog, and focused tests: passed, no issues
+- `flutter test test/poly_multisample/decent_sampler_converter_test.dart test/services/app_update_service_test.dart`: passed, 43 tests
+- `git diff --check`: passed
+- `flutter build windows --release`: passed after `flutter clean` in the Windows mirror
+- Windows release output copied to `C:\Users\babyj\nt_helper-build\build\windows\x64\runner\Release`
 
 ## Failure Modes To Avoid
 
@@ -277,10 +365,8 @@ dart analyze lib/poly_multisample/decent_sampler_converter.dart lib/ui/poly_mult
 - Hiding row-level `Low`, `Root`, `Vel`, and `RR` controls.
 - Adding a `High` control to the import UI.
 - Letting Manual edits continue with overlapping selected note/range + velocity + RR lanes.
-- Letting Manual edits shift, reseed, swap, or prune rows after the user has taken manual control.
 - Letting Smart edits turn into an unmanageable jigsaw for complex maps; users must be able to switch to Manual edits.
 - Letting a quick mapping mode leave stale overrides from the previous mode.
-- Letting Chromatic/Velocity/RR/Add unmapped export partial overrides that fall back to Decent XML instead of the visible row map.
 - Losing preview and per-row mapping in the loose WAV flow.
 - Matching tags by loose substrings instead of structured tag keys.
 
@@ -293,12 +379,11 @@ This fork is in a clean state when:
 - Tags/Groups appear only where useful
 - mapping modes seed simple row values
 - Smart edits and Manual edits are available on Decent tag/group rows
-- Smart edits can repair conflicts, but Manual edits never shifts rows and only warns/blocks
 - Manual edits reserve warning space and block Continue on overlaps
 - rows remain editable through `Low`, `Root`, `Vel`, and `RR`
-- non-XML mapping modes export the full visible row map, not partial edited axes
 - RR mode does not export stale velocity overrides
 - Use Decent map preserves compatible XML mapping
 - Add unmapped lets the user finish mapping in the editor
 - focused Decent tests pass
 - targeted analyzer passes
+- Windows release build passes
