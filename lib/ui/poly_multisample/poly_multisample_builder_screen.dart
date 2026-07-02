@@ -2194,21 +2194,28 @@ class _DecentQuickMappingPanel extends StatelessWidget {
             ),
             if (mode == _DecentQuickMapping.chromatic) ...[
               SizedBox(
-                width: 130,
-                child: _SampleNoteStepper(
-                  label: 'Root start',
-                  value: rootMidi,
-                  onChanged: onRootChanged,
-                ),
-              ),
-              SizedBox(
-                width: 120,
-                child: _SampleNumberStepper(
-                  label: 'Vel',
-                  value: velocityLayer,
-                  min: 1,
-                  max: 32,
-                  onChanged: onVelocityChanged,
+                width: 260,
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: _SampleNoteStepper(
+                        label: 'Root start',
+                        value: rootMidi,
+                        onChanged: onRootChanged,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    SizedBox(
+                      width: 120,
+                      child: _SampleNumberStepper(
+                        label: 'Vel',
+                        value: velocityLayer,
+                        min: 1,
+                        max: 32,
+                        onChanged: onVelocityChanged,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],
@@ -2337,7 +2344,7 @@ class _TagSelectionPanel extends StatelessWidget {
             TextButton(onPressed: onClear, child: const Text('Clear')),
           ],
         ),
-        const SizedBox(height: 6),
+        const SizedBox(height: 2),
         Text(
           manualEdits
               ? 'Manual edits leave rows where you put them. Fix any overlap before continuing.'
@@ -2495,7 +2502,7 @@ class _GroupMappingPanel extends StatelessWidget {
             TextButton(onPressed: onClear, child: const Text('Clear')),
           ],
         ),
-        const SizedBox(height: 6),
+        const SizedBox(height: 2),
         Text(
           manualEdits
               ? 'Manual edits leave rows where you put them. Fix any overlap before continuing.'
