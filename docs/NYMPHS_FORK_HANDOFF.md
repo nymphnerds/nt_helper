@@ -41,6 +41,9 @@ Branch status after the six upstream merges and Decent structural-tag pass:
 - Fifth upstream sync: `0077f24b Merge remote-tracking branch 'upstream/main' into nymph-next-fix`.
 - Sixth upstream sync: `95085858 Merge remote-tracking branch 'upstream/main' into nymph-next-fix`.
 - Current fork work sits on top of all six syncs and includes the structural Decent tag/import cleanup.
+- Current release tag target: `poly-multisample-builder-test-v10`.
+- Current Windows zip target: `nt_helper-windows-poly-multisample-builder-test-v10.zip`.
+- Latest fork change: Decent Manual edits no longer shift/reseed rows, non-XML Decent modes export the full visible row mapping, and the Decent tag/group header actions are aligned.
 
 First upstream sync brought in:
 
@@ -344,10 +347,11 @@ flutter build windows --release
 
 Latest focused verification before this handoff update:
 
+- `flutter analyze lib\ui\poly_multisample\poly_multisample_builder_screen.dart`: passed in the Windows mirror
 - `dart analyze` on app release/update, Decent converter, Poly Multisample UI, update dialog, and focused tests: passed, no issues
 - `flutter test test/poly_multisample/decent_sampler_converter_test.dart test/services/app_update_service_test.dart`: passed, 43 tests
 - `git diff --check`: passed
-- `flutter build windows --release`: passed after `flutter clean` in the Windows mirror
+- `flutter build windows --release`: passed in the Windows mirror
 - Windows release output copied to `C:\Users\babyj\nt_helper-build\build\windows\x64\runner\Release`
 
 ## Failure Modes To Avoid

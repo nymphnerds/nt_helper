@@ -3,8 +3,8 @@
 ## Poly Multisample Builder Test Release Changelog
 
 Branch: `nymph-next-fix`
-Tag: `poly-multisample-builder-test-v9`
-Windows zip: `nt_helper-windows-poly-multisample-builder-test-v9.zip`
+Tag: `poly-multisample-builder-test-v10`
+Windows zip: `nt_helper-windows-poly-multisample-builder-test-v10.zip`
 
 This fork/branch contains an experimental Windows test build for a new Poly Multisample Builder in NT Helper.
 
@@ -24,6 +24,8 @@ This fork/branch contains an experimental Windows test build for a new Poly Mult
 - Ran a fresh Windows release build from the Windows mirror.
 - Build output copied to `C:\Users\babyj\nt_helper-build\build\windows\x64\runner\Release`.
 - Fresh executable: `C:\Users\babyj\nt_helper-build\build\windows\x64\runner\Release\nt_helper.exe`.
+- Release zip: `nt_helper-windows-poly-multisample-builder-test-v10.zip`.
+- Latest changes: Manual edits no longer shift/reseed rows, non-XML Decent modes export the visible row mapping, and the Decent tag/group header alignment was tightened.
 
 ### 2026-07-02 Decent Manual Edit Mode
 
