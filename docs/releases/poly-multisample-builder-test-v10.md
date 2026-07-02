@@ -1,6 +1,6 @@
 # Poly Multisample Builder test v10
 
-Windows release build for the current Nymphs-Fork Poly Multisample Builder state. This is a normal release, not a prerelease.
+Normal release for the current Nymphs-Fork Poly Multisample Builder state.
 
 ## Asset
 

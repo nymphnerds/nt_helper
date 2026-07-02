@@ -22,17 +22,16 @@ The top-level builder now has one Import path. It accepts:
 
 The flow branches internally by source type. Do not bring back a separate top-level Custom button for the same job.
 
-## Compared With Developer Main
+## Current Release
 
-Comparison baseline:
+- Branch: `nymph-next-fix`
+- Release: <https://github.com/nymphnerds/nt_helper/releases/tag/poly-multisample-builder-test-v10>
+- Windows zip: `nt_helper-windows-poly-multisample-builder-test-v10.zip`
+- SHA256: `a706d91a8f61d451f0c5cfa90543778e916db865af3df31d0bc24307762575d5`
 
-```text
-upstream/main = thorinside/nt_helper main
-fork branch   = nymph-next-fix
-fetched       = 2026-07-02
-```
+## Developer Main Baseline
 
-Branch status after the six upstream merges and Decent structural-tag pass:
+The fork is based on repeated merges from developer `upstream/main`. Keep this history below the current fork notes so the newest work stays visible first.
 
 - First upstream sync: `28419624 Merge remote-tracking branch 'upstream/main' into nymph-next-fix`.
 - Second upstream sync: `02d08a66 Merge remote-tracking branch 'upstream/main' into nymph-next-fix`.
@@ -40,72 +39,12 @@ Branch status after the six upstream merges and Decent structural-tag pass:
 - Fourth upstream sync: `30c5aef2 Merge remote-tracking branch 'upstream/main' into nymph-next-fix`.
 - Fifth upstream sync: `0077f24b Merge remote-tracking branch 'upstream/main' into nymph-next-fix`.
 - Sixth upstream sync: `95085858 Merge remote-tracking branch 'upstream/main' into nymph-next-fix`.
-- Current fork work sits on top of all six syncs and includes the structural Decent tag/import cleanup.
-- Current release tag target: `poly-multisample-builder-test-v10`.
-- Current Windows zip target: `nt_helper-windows-poly-multisample-builder-test-v10.zip`.
-- Current release page: <https://github.com/nymphnerds/nt_helper/releases/tag/poly-multisample-builder-test-v10>.
-- Current zip SHA256: `a706d91a8f61d451f0c5cfa90543778e916db865af3df31d0bc24307762575d5`.
-- Latest fork change: Decent Manual edits no longer shift/reseed rows, non-XML Decent modes export the full visible row mapping, and the Decent tag/group header actions are aligned.
 
-First upstream sync brought in:
+Those syncs brought the fork up to the current developer-main baseline before the latest Poly Multisample Builder work.
 
-```text
-118498c3 Bump version to 2.42.0+278
-c9a138d3 chore(video): gate popup diagnostics to debug builds
-c24dd66e fix(video): avoid reclaiming focus from Windows popup
-c90b68f0 fix(video): keep popup activation on top-level HWND
-14b8a9b4 fix(video): avoid hidden popup focus activation
-f6d9d49a fix(video): avoid stealing focus from Windows popup
-aa7e5474 chore(video): log Windows popup focus diagnostics
-b2d8a6a5 fix(video): replace Windows popup backend
-81d18f5d fix(video): hide Linux popup on close
-5aefedf0 fix(video): keep Linux popup close local
-076277f7 ci: update flutter version
-bb736ce1 build: upgrade flutter midi command
-42882f45 feat(video): add opt-in floating popup window
-```
+## Main Fork Payload
 
-Second upstream sync brought in:
-
-```text
-d1b137b0 Bump version to 2.42.1+279
-5521c736 fix(midi): preserve Windows MIDI discovery after disconnect
-```
-
-Third upstream sync brought in:
-
-```text
-0588394c Bump version to 2.42.2+280
-494a8b60 fix(update): harden Windows updater install script
-4fd32d79 fix(update): require platform asset before announcing release
-```
-
-Fourth upstream sync brought in:
-
-```text
-c12d9b46 Bump version to 2.42.3+281
-ea230004 ci(windows): bundle Visual C++ runtime DLLs
-```
-
-Fifth upstream sync brought in:
-
-```text
-662c2199 Bump version to 2.42.5+283
-fed33a75 fix(windows): harden USB video capture threading
-fc2dea2d Bump version to 2.42.4+282
-c88dcca8 feat(windows): publish Inno Setup installer
-```
-
-Sixth upstream sync brought in:
-
-```text
-6e102922 Bump version to 2.42.7+285
-5073ac98 build(windows): offer VC++ redist when missing
-7f3c0967 Bump version to 2.42.6+284
-94ec542e ci(windows): stop bundling VC++ runtime DLLs
-```
-
-Committed fork payload versus the fork point includes:
+The fork payload is concentrated in:
 
 - `lib/poly_multisample/decent_sampler_converter.dart`
 - `lib/poly_multisample/poly_multisample_models.dart`
@@ -118,16 +57,6 @@ Committed fork payload versus the fork point includes:
 - `docs/POLYSAMPLER_BUILDER_FORK.md`
 - `docs/WINDOWS_FLUTTER_WORKFLOW.md`
 - README/pubspec/supporting builder integration changes
-
-Current fork work in this handoff:
-
-- `lib/poly_multisample/decent_sampler_converter.dart`
-- `lib/ui/poly_multisample/poly_multisample_builder_screen.dart`
-- `test/poly_multisample/decent_sampler_converter_test.dart`
-- `README.md`
-- `docs/NYMPHS_FORK_HANDOFF.md`
-
-Direct diff from current working tree to `upstream/main` is larger because it includes the fork feature work that is not in developer main.
 
 ## Loose WAV Import
 
@@ -330,31 +259,13 @@ The focused Decent test file currently covers:
 - fixed-pitch bed tags from real XML (`pitchKeyTrack="0"`) staying visible
 - representative preview source paths for Decent tags/groups
 
-## Verification Commands
-
-Run from the Windows build mirror:
-
-```text
-C:\Users\babyj\nt_helper_winbuild
-```
-
-Commands:
+## Checks To Run
 
 ```bash
 dart format lib/poly_multisample/decent_sampler_converter.dart lib/ui/poly_multisample/poly_multisample_builder_screen.dart test/poly_multisample/decent_sampler_converter_test.dart
 flutter test test/poly_multisample/decent_sampler_converter_test.dart
 dart analyze lib/poly_multisample/decent_sampler_converter.dart lib/ui/poly_multisample/poly_multisample_builder_screen.dart test/poly_multisample/decent_sampler_converter_test.dart
-flutter build windows --release
 ```
-
-Latest focused verification before this handoff update:
-
-- `flutter analyze lib\ui\poly_multisample\poly_multisample_builder_screen.dart`: passed in the Windows mirror
-- `dart analyze` on app release/update, Decent converter, Poly Multisample UI, update dialog, and focused tests: passed, no issues
-- `flutter test test/poly_multisample/decent_sampler_converter_test.dart test/services/app_update_service_test.dart`: passed, 43 tests
-- `git diff --check`: passed
-- `flutter build windows --release`: passed in the Windows mirror
-- Windows release output copied to `C:\Users\babyj\nt_helper-build\build\windows\x64\runner\Release`
 
 ## Failure Modes To Avoid
 
@@ -391,4 +302,3 @@ This fork is in a clean state when:
 - Add unmapped lets the user finish mapping in the editor
 - focused Decent tests pass
 - targeted analyzer passes
-- Windows release build passes
